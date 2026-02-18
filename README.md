@@ -25,10 +25,15 @@ shopify app init --template=https://github.com/Shopify/shopify-app-template-reac
 ### Local Development
 
 ```shell
-shopify app dev
+npm run dev
 ```
 
-Press P to open the URL to your app. Once you click install, you can start development.
+This runs `shopify app dev --use-localhost` (localhost with a local HTTPS proxy). Press P to open the URL to your app. Once you click install, you can start development.
+
+**When using a VPN (e.g. Astrill):** Localhost can stop working because the VPN may route or block loopback. Two options:
+
+1. **Use the tunnel instead:** Run `npm run dev:tunnel` so the CLI uses the Cloudflare tunnel instead of localhost. Your `.env` `APP_URL` will be updated with the tunnel URL.
+2. **Keep localhost:** The dev server is bound to `127.0.0.1`. If the CLI opens `https://localhost:...` and it fails, try opening `https://127.0.0.1:3458` (or the port shown) in your browser. You can also add split tunneling in your VPN so `127.0.0.1` and `localhost` are excluded from the VPN.
 
 Local development is powered by [the Shopify CLI](https://shopify.dev/docs/apps/tools/cli). It logs into your account, connects to an app, provides environment variables, updates remote config, creates a tunnel and provides commands to generate extensions.
 
@@ -122,7 +127,7 @@ When you're ready to set up your app in production, you can follow [our deployme
 
 - [Google Cloud Run](https://shopify.dev/docs/apps/launch/deployment/deploy-to-google-cloud-run): This tutorial is written specifically for this example repo, and is compatible with the extended steps included in the subsequent [**Build your app**](tutorial) in the **Getting started** docs. It is the most detailed tutorial for taking a React Router-based Shopify app and deploying it to production. It includes configuring permissions and secrets, setting up a production database, and even hosting your apps behind a load balancer across multiple regions.
 - [Fly.io](https://fly.io/docs/js/shopify/): Leverages the Fly.io CLI to quickly launch Shopify apps to a single machine.
-- [Render](https://render.com/docs/deploy-shopify-app): This tutorial guides you through using Docker to deploy and install apps on a Dev store.
+- [Render](https://render.com/docs/deploy-shopify-app): This tutorial guides you through using Docker to deploy and install apps on a Dev store. **To avoid SIGTERM on startup**, set **Release Command** to `npm run release` (runs migrations before the new instance goes live) and leave **Start Command** as the Docker default. Ensure `DATABASE_URL` is set in Render's Environment.
 - [Manual deployment guide](https://shopify.dev/docs/apps/launch/deployment/deploy-to-hosting-service): This resource provides general guidance on the requirements of deployment including environment variables, secrets, and persistent data.
 
 When you reach the step for [setting up environment variables](https://shopify.dev/docs/apps/deployment/web#set-env-vars), you also need to set the variable `NODE_ENV=production`.
