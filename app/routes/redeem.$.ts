@@ -1,7 +1,11 @@
 import { json } from "@remix-run/node";
 import type { ActionFunctionArgs } from "@remix-run/node";
 import crypto from "crypto";
+import jwt from "jsonwebtoken";
 import prisma from "../db.server";
+
+const JWT_SECRET = process.env.SHOPIFY_API_SECRET ?? process.env.JWT_SECRET ?? "fallback-secret";
+const REDEEM_TOKEN_EXPIRY_SECONDS = 10 * 60; // 10 minutes
 
 // 🔐 VERIFY SHOPIFY APP PROXY SIGNATURE
 function verifyProxySignature(url: URL) {
@@ -106,13 +110,25 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // return {
       //   variantId: numericVariantId,
       // };
+      return { ticket, expiresAt };
     });
 
-    // ✅ SUCCESS RESPONSE
-    return json({
+    // ✅ SUCCESS RESPONSE – payload for JWT
+    const expiresAt = result.expiresAt;
+    const ticketType = result.ticket.type;
+    const payload = {
       success: true,
       message: "Ticket is valid, please select a prize.",
-      // variantId: result.variantId,
+      ticketType,
+      expireTime: expiresAt.toISOString(),
+    };
+    const token = jwt.sign(payload, JWT_SECRET, {
+      expiresIn: REDEEM_TOKEN_EXPIRY_SECONDS,
+    });
+
+    return json({
+      ...payload,
+      token,
     });
   } catch (error: any) {
     return json(
