@@ -81,38 +81,38 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
       // 3.3 Reserve prize
-      await tx.prize.update({
-        where: { id: prize.id },
-        data: {
-          status: "RESERVED",
-          reservedUntil: expiresAt,
-        },
-      });
+      // await tx.prize.update({
+      //   where: { id: prize.id },
+      //   data: {
+      //     status: "RESERVED",
+      //     reservedUntil: expiresAt,
+      //   },
+      // });
 
       // 3.4 Update ticket
-      await tx.ticketCode.update({
-        where: { id: ticket.id },
-        data: {
-          status: "RESERVED",
-          reservedPrizeId: prize.id,
-          reservationExpiresAt: expiresAt,
-        },
-      });
+      // await tx.ticketCode.update({
+      //   where: { id: ticket.id },
+      //   data: {
+      //     status: "RESERVED",
+      //     reservedPrizeId: prize.id,
+      //     reservationExpiresAt: expiresAt,
+      //   },
+      // });
 
       // 3.5 Extract numeric variant ID
-      const numericVariantId =
-        prize.shopifyVariantId.split("/").pop() ?? prize.shopifyVariantId;
+      // const numericVariantId =
+      //   prize.shopifyVariantId.split("/").pop() ?? prize.shopifyVariantId;
 
-      return {
-        variantId: numericVariantId,
-      };
+      // return {
+      //   variantId: numericVariantId,
+      // };
     });
 
     // ✅ SUCCESS RESPONSE
     return json({
       success: true,
-      message: "Prize reserved! Redirecting to cart...",
-      variantId: result.variantId,
+      message: "Ticket is valid, please select a prize.",
+      // variantId: result.variantId,
     });
   } catch (error: any) {
     return json(
