@@ -88,7 +88,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         create: {
           code: row.code,
           type: row.type,
-          status: "unused",
+          status: "ACTIVE",
         },
         update: {},
       });

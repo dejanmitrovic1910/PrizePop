@@ -61,22 +61,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
 
       // 3.2 Find available or expired-reserved prize
-      const prize = await tx.prize.findFirst({
-        where: {
-          OR: [
-            { status: "AVAILABLE" },
-            {
-              status: "RESERVED",
-              reservedUntil: { lt: now },
-            },
-          ],
-        },
-        orderBy: { id: "asc" },
-      });
+      // const prize = await tx.prize.findFirst({
+      //   where: {
+      //     OR: [
+      //       { status: "AVAILABLE" },
+      //       {
+      //         status: "RESERVED",
+      //         reservedUntil: { lt: now },
+      //       },
+      //     ],
+      //   },
+      //   orderBy: { id: "asc" },
+      // });
 
-      if (!prize) {
-        throw new Error("No prizes available at the moment.");
-      }
+      // if (!prize) {
+      //   throw new Error("No prizes available at the moment.");
+      // }
 
       const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
