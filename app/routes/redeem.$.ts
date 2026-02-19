@@ -1,7 +1,7 @@
 import { json } from "@remix-run/node";
 import type { ActionFunctionArgs } from "@remix-run/node";
 import crypto from "crypto";
-import { prisma } from "~/db.server";
+import prisma from "../db.server";
 
 // 🔐 VERIFY SHOPIFY APP PROXY SIGNATURE
 function verifyProxySignature(url: URL) {
