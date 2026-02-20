@@ -93,6 +93,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const expiresAt = new Date(Date.now() + 120 * 60 * 1000);
       const verifyKey = crypto.randomBytes(16).toString("hex");
 
+      // 3.2b Clear all fields except code, type, status, createdAt on same-email ACTIVE rows
+      await tx.ticketCode.updateMany({
+        where: {
+          email,
+          status: "ACTIVE",
+        },
+        data: {
+          verifyKey: null,
+          email: null,
+          usedAt: null,
+          usedOrderId: null,
+          expiresAt: null,
+          reservedPrizeId: null,
+          reservationExpiresAt: null,
+        },
+      });
+
       // 3.3 Update ticket (set verifyKey for future token verification; never expose code on storefront)
       const updatedTicket = await tx.ticketCode.update({
         where: { id: ticket.id },
