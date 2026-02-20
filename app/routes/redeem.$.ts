@@ -39,10 +39,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // 📦 2️⃣ GET FORM DATA
     const formData = await request.formData();
     const code = String(formData.get("code") || "").trim();
+    const email = String(formData.get("email") || "").trim();
 
     if (!code) {
       return json(
         { success: false, message: "Ticket code is required." },
+        { status: 400 }
+      );
+    }
+
+    if (!email) {
+      return json(
+        { success: false, message: "Email is required." },
         { status: 400 }
       );
     }
@@ -120,6 +128,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       success: true,
       message: "Ticket is valid, please select a prize.",
       ticketType,
+      email,
       expireTime: expiresAt.toISOString(),
     };
     const token = jwt.sign(payload, JWT_SECRET, {
