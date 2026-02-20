@@ -5,7 +5,7 @@ import jwt from "jsonwebtoken";
 import prisma from "../db.server";
 
 const JWT_SECRET = process.env.SHOPIFY_API_SECRET ?? process.env.JWT_SECRET ?? "fallback-secret";
-const REDEEM_TOKEN_EXPIRY_SECONDS = 10 * 60; // 10 minutes
+const REDEEM_TOKEN_EXPIRY_SECONDS = 120 * 60; // 2 hours
 
 // 🔐 VERIFY SHOPIFY APP PROXY SIGNATURE
 function verifyProxySignature(url: URL) {

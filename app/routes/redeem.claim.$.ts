@@ -3,8 +3,8 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import jwt from "jsonwebtoken";
 import prisma from "../db.server";
 
-const JWT_SECRET = process.env.JWT_SECRET ?? "fallback-secret";
-const REDEEM_TOKEN_EXPIRY_SECONDS = 10 * 60; // 10 minutes (match redeem.$.ts)
+const JWT_SECRET = process.env.SHOPIFY_API_SECRET ?? process.env.JWT_SECRET ?? "fallback-secret";
+const REDEEM_TOKEN_EXPIRY_SECONDS = 120 * 60; // 2 hours (match redeem.$.ts)
 const RESERVATION_WINDOW_MS = 15 * 60 * 1000; // 15 minutes – reservation is liberated after this
 
 type TokenPayload = {
