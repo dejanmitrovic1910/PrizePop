@@ -41,7 +41,6 @@ enum TicketType {
 model TicketCode {
   id                    String   @id @default(uuid())
   code                  String   @unique
-  verifyKey             String?  @unique // random key returned on redeem; used as verify key for token (never expose code on storefront)
   type                  TicketType
   status                String   @default("ACTIVATE")
   email                 String?
