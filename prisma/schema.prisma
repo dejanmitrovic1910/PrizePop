@@ -33,13 +33,21 @@ model Session {
   refreshTokenExpires DateTime?
 }
 
+enum TicketType {
+  GOLDEN
+  PLATINUM
+}
+
 model TicketCode {
   id                    String   @id @default(uuid())
   code                  String   @unique
-  type                  String
-  status                String   @default("unused")
+  verifyKey             String?  @unique // random key returned on redeem; used as verify key for token (never expose code on storefront)
+  type                  TicketType
+  status                String   @default("ACTIVATE")
+  email                 String?
   usedAt                DateTime?
   usedOrderId           String?
+  expiresAt             DateTime?
   reservedPrizeId       String?
   reservationExpiresAt  DateTime?
   createdAt             DateTime @default(now())

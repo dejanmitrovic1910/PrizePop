@@ -90,46 +90,46 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       //   throw new Error("No prizes available at the moment.");
       // }
 
-      const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+      const expiresAt = new Date(Date.now() + 120 * 60 * 1000);
+      const verifyKey = crypto.randomBytes(16).toString("hex");
 
-      // 3.3 Reserve prize
-      // await tx.prize.update({
-      //   where: { id: prize.id },
-      //   data: {
-      //     status: "RESERVED",
-      //     reservedUntil: expiresAt,
-      //   },
-      // });
+      // 3.3 Update ticket (set verifyKey for future token verification; never expose code on storefront)
+      const updatedTicket = await tx.ticketCode.update({
+        where: { id: ticket.id },
+        data: {
+          status: "RESERVED",
+          expiresAt: expiresAt,
+          email: email,
+          verifyKey,
+        },
+      });
 
-      // 3.4 Update ticket
-      // await tx.ticketCode.update({
-      //   where: { id: ticket.id },
-      //   data: {
-      //     status: "RESERVED",
-      //     reservedPrizeId: prize.id,
-      //     reservationExpiresAt: expiresAt,
-      //   },
-      // });
+      // 3.4 Reserved prizes from ticket only (no Prize table): reservedPrizeId + this row's status (e.g. RESERVED, DISABLED)
+      const reservedPrizes: { prizeId: string; status: string, reservationExpiresAt: Date }[] = [];
+      if (updatedTicket.reservedPrizeId) {
+        reservedPrizes.push({
+          prizeId: updatedTicket.reservedPrizeId,
+          status: updatedTicket.status,
+          reservationExpiresAt: updatedTicket.reservationExpiresAt!,
+        });
+      }
 
-      // 3.5 Extract numeric variant ID
-      // const numericVariantId =
-      //   prize.shopifyVariantId.split("/").pop() ?? prize.shopifyVariantId;
-
-      // return {
-      //   variantId: numericVariantId,
-      // };
-      return { ticket, expiresAt };
+      return { ticket: updatedTicket, expiresAt, reservedPrizes };
     });
 
-    // ✅ SUCCESS RESPONSE – payload for JWT
+    // ✅ SUCCESS RESPONSE – payload for JWT (never include ticket code on storefront)
     const expiresAt = result.expiresAt;
     const ticketType = result.ticket.type;
+    const verifyKey = result.ticket.verifyKey!;
+    const reservedPrizes = result.reservedPrizes;
     const payload = {
       success: true,
       message: "Ticket is valid, please select a prize.",
+      verifyKey, // unique random key for future token verification (safe to use on storefront)
       ticketType,
       email,
       expireTime: expiresAt.toISOString(),
+      reservedPrizes, // { prizeId, status }[] for frontend lock and out-of-stock prevention
     };
     const token = jwt.sign(payload, JWT_SECRET, {
       expiresIn: REDEEM_TOKEN_EXPIRY_SECONDS,

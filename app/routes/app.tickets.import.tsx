@@ -21,7 +21,7 @@ type TicketRow = { code: string; type: string };
 function parseCsvTicketRows(text: string): TicketRow[] {
   const rows: TicketRow[] = [];
   const lines = text.split(/\r?\n/).map((line) => line.trim());
-  const defaultType = "default";
+  const defaultType = "Golden";
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
