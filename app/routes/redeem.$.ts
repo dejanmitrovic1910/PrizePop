@@ -91,7 +91,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // }
 
       const expiresAt = new Date(Date.now() + 120 * 60 * 1000);
-      const verifyKey = crypto.randomBytes(16).toString("hex");
 
       // 3.2b Clear all fields except code, type, status, createdAt on same-email ACTIVE rows
       await tx.ticketCode.updateMany({
@@ -100,7 +99,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           status: "ACTIVE",
         },
         data: {
-          verifyKey: null,
           email: null,
           usedAt: null,
           usedOrderId: null,
@@ -110,13 +108,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         },
       });
 
-      // 3.3 Update ticket (set verifyKey for future token verification; never expose code on storefront)
+      // 3.3 Update ticket (email + expiresAt for claim verification; ticket id used in token)
       const updatedTicket = await tx.ticketCode.update({
         where: { id: ticket.id },
         data: {
           expiresAt: expiresAt,
           email: email,
-          verifyKey,
         },
       });
 
@@ -133,15 +130,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return { ticket: updatedTicket, expiresAt, reservedPrizes };
     });
 
-    // ✅ SUCCESS RESPONSE – payload for JWT (never include ticket code on storefront)
+    // ✅ SUCCESS RESPONSE – payload for JWT (ticket id used for claim verification; never expose code on storefront)
     const expiresAt = result.expiresAt;
     const ticketType = result.ticket.type;
-    const verifyKey = result.ticket.verifyKey!;
+    const ticketId = result.ticket.id;
     const reservedPrizes = result.reservedPrizes;
     const payload = {
       success: true,
       message: "Ticket is valid, please select a prize.",
-      verifyKey, // unique random key for future token verification (safe to use on storefront)
+      ticketId, // ticket code id for claim verification
       ticketType,
       email,
       expireTime: expiresAt.toISOString(),
