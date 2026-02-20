@@ -34,8 +34,8 @@ model Session {
 }
 
 enum TicketType {
-  GOLDEN
-  PLATINUM
+  Golden
+  Platinum
 }
 
 model TicketCode {

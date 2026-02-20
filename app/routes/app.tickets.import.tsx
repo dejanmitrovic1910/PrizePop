@@ -10,6 +10,14 @@ import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import prisma from "../db.server";
 
+const VALID_TICKET_TYPES = ["Golden", "Platinum"] as const;
+
+function parseTicketType(value: string): (typeof VALID_TICKET_TYPES)[number] {
+  const v = value.trim().toLowerCase();
+  if (v === "platinum") return "Platinum";
+  return "Golden";
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   await authenticate.admin(request);
   const total = await prisma.ticketCode.count();
@@ -87,7 +95,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         where: { code: row.code },
         create: {
           code: row.code,
-          type: row.type,
+          type: parseTicketType(row.type),
           status: "ACTIVE",
         },
         update: {},
