@@ -97,7 +97,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const updatedTicket = await tx.ticketCode.update({
         where: { id: ticket.id },
         data: {
-          status: "RESERVED",
           expiresAt: expiresAt,
           email: email,
           verifyKey,
