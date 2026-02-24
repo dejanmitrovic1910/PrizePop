@@ -59,13 +59,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     // 🧠 3️⃣ ATOMIC TRANSACTION
     const result = await prisma.$transaction(async (tx) => {
-      // 3.0 Clear expired reservations (after 15 min): if status is not DISABLED, liberate reservedPrizeId
+      // 3.0 Clear expired reservations (after 15 min): if ticket not used, remove email, expiresAt, reservedPrizeId, reservationExpiresAt
       await tx.ticketCode.updateMany({
         where: {
           status: { not: "DISABLED" },
           reservationExpiresAt: { lt: now },
+          usedAt: null,
+          usedOrderId: null,
         },
         data: {
+          email: null,
+          expiresAt: null,
           reservedPrizeId: null,
           reservationExpiresAt: null,
         },

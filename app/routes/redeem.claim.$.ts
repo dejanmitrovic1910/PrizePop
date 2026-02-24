@@ -78,13 +78,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       );
     }
 
-    // Clear expired reservations (after 15 min): if status is not DISABLED, remove reservedPrizeId and reservationExpiresAt
+    // Clear expired reservations (after 15 min): if ticket not used, remove email, expiresAt, reservedPrizeId, reservationExpiresAt
     await prisma.ticketCode.updateMany({
       where: {
         status: { not: "DISABLED" },
         reservationExpiresAt: { lt: now },
+        usedAt: null,
+        usedOrderId: null,
       },
       data: {
+        email: null,
+        expiresAt: null,
         reservedPrizeId: null,
         reservationExpiresAt: null,
       },
