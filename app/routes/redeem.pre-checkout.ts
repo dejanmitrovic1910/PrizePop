@@ -5,7 +5,6 @@ import prisma from "../db.server";
 
 const JWT_SECRET = process.env.SHOPIFY_API_SECRET ?? process.env.JWT_SECRET ?? "fallback-secret";
 const REDEEM_TOKEN_EXPIRY_SECONDS = 120 * 60; // 2 hours (match redeem.$.ts)
-const STOREFRONT_API_VERSION = "2024-01";
 
 type TokenPayload = {
   ticketId: string;
@@ -36,84 +35,15 @@ function signToken(payload: Omit<TokenPayload, "exp">) {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: REDEEM_TOKEN_EXPIRY_SECONDS });
 }
 
-async function getCartPrizeVariantIds(cartToken: string, shop: string, storefrontAccessToken: string): Promise<string[]> {
-  const url = `https://${shop}/api/${STOREFRONT_API_VERSION}/graphql.json`;
-  const query = `
-    query getCart($cartId: ID!) {
-      cart(id: $cartId) {
-        id
-        lines(first: 100) {
-          nodes {
-            merchandise {
-              ... on ProductVariant {
-                id
-                product {
-                  tags
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  `;
-
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Shopify-Storefront-Access-Token": storefrontAccessToken,
-    },
-    body: JSON.stringify({
-      query,
-      variables: { cartId: cartToken },
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error("Failed to fetch cart");
-  }
-
-  const data = (await response.json()) as {
-    data?: { cart?: { lines?: { nodes?: Array<{ merchandise?: { id?: string; product?: { tags?: string[] } } }> } } };
-    errors?: Array<{ message?: string }>;
-  };
-
-  if (data.errors?.length) {
-    throw new Error(data.errors[0]?.message ?? "Cart query failed");
-  }
-
-  const nodes = data.data?.cart?.lines?.nodes ?? [];
-  const prizeVariantIds: string[] = [];
-
-  for (const node of nodes) {
-    const merchandise = node.merchandise as { id?: string; product?: { tags?: string[] } } | undefined;
-    if (!merchandise?.id || !merchandise.product?.tags) continue;
-    const hasPrizeTag = merchandise.product.tags.some((t: string) => t.toLowerCase() === "prize");
-    if (hasPrizeTag) {
-      prizeVariantIds.push(merchandise.id);
-    }
-  }
-
-  return prizeVariantIds;
-}
-
 export const action = async ({ request }: ActionFunctionArgs) => {
   if (request.method !== "POST") {
     return json({ success: false, message: "Method not allowed." }, { status: 405 });
   }
 
   try {
-    const body = (await request.json()) as { cartToken?: string; token?: string; shop?: string };
-    const cartToken = body.cartToken?.trim();
-    const token = body.token?.trim();
-
-    if (!cartToken) {
-      return json(
-        { success: false, message: "Cart token is required." },
-        { status: 400 }
-      );
-    }
+    const body = (await request.json()) as { cartToken?: string; prizeVariantId?: string | number; token?: string; shop?: string };
+    const prizeVariantId = body.prizeVariantId != null ? String(body.prizeVariantId).trim() : undefined;
+    const token = body.token != null ? String(body.token).trim() : "";
 
     if (!token) {
       return json(
@@ -151,26 +81,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       );
     }
 
-    const shop = body.shop?.trim() || process.env.SHOPIFY_STORE_DOMAIN;
-    const storefrontAccessToken = process.env.SHOPIFY_STOREFRONT_ACCESS_TOKEN;
+    const updatedToken = signToken({
+      ticketId,
+      email,
+      ticketType: payload.ticketType,
+      expireTime: payload.expireTime,
+      reservedPrizes: buildReservedPrizesFromTicket(ticket),
+    });
 
-    if (!shop || !storefrontAccessToken) {
-      return json(
-        { success: false, message: "Server configuration error." },
-        { status: 500 }
-      );
-    }
-
-    const prizeVariantIds = await getCartPrizeVariantIds(cartToken, shop, storefrontAccessToken);
-
-    if (prizeVariantIds.length === 0) {
-      const updatedToken = signToken({
-        ticketId,
-        email,
-        ticketType: payload.ticketType,
-        expireTime: payload.expireTime,
-        reservedPrizes: buildReservedPrizesFromTicket(ticket),
-      });
+    if (!prizeVariantId) {
       return json({ success: true, token: updatedToken });
     }
 
@@ -178,18 +97,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     const otherPending = await prisma.ticketCode.findFirst({
       where: {
-        reservedPrizeId: { in: prizeVariantIds },
+        reservedPrizeId: prizeVariantId,
         reservationExpiresAt: { gt: now },
         id: { not: ticketId },
       },
-    });
-
-    const updatedToken = signToken({
-      ticketId,
-      email,
-      ticketType: payload.ticketType,
-      expireTime: payload.expireTime,
-      reservedPrizes: buildReservedPrizesFromTicket(ticket),
     });
 
     if (otherPending) {
