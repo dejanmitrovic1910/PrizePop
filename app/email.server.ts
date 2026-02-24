@@ -11,7 +11,7 @@ export async function sendPlatinumInfoEmail(to: string): Promise<{ ok: boolean; 
     return { ok: false, error: "Email is not configured. Set RESEND_API_KEY in environment." };
   }
 
-  const subject = "Your Platinum Ticket Information";
+  const subject = "Got Platinum Ticket Information";
   const html = `
     <h2>Platinum Ticket Information</h2>
     <p>Thank you for your interest. This email confirms your Platinum ticket details.</p>

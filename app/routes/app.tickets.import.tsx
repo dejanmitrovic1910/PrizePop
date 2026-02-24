@@ -4,10 +4,11 @@ import type {
   HeadersFunction,
   LoaderFunctionArgs,
 } from "react-router";
-import { useFetcher, useLoaderData, useRevalidator } from "react-router";
+import { useFetcher, useLoaderData, useRevalidator, useSearchParams } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
+import { type Prisma } from "@prisma/client";
 import prisma from "../db.server";
 import { sendPlatinumInfoEmail } from "../email.server";
 
@@ -19,25 +20,87 @@ function parseTicketType(value: string): (typeof VALID_TICKET_TYPES)[number] {
   return "Golden";
 }
 
-const TICKET_STATUS_PAGE_SIZE = 100;
+const TICKET_STATUS_PAGE_SIZE = 10;
+
+const SORT_OPTIONS = [
+  { value: "createdAt_desc", label: "Created (newest first)" },
+  { value: "createdAt_asc", label: "Created (oldest first)" },
+  { value: "code_asc", label: "Code (A–Z)" },
+  { value: "code_desc", label: "Code (Z–A)" },
+  { value: "type_asc", label: "Type (A–Z)" },
+  { value: "type_desc", label: "Type (Z–A)" },
+  { value: "status_asc", label: "Status (A–Z)" },
+  { value: "status_desc", label: "Status (Z–A)" },
+  { value: "usedAt_desc", label: "Used at (newest first)" },
+  { value: "usedAt_asc", label: "Used at (oldest first)" },
+] as const;
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   await authenticate.admin(request);
-  const total = await prisma.ticketCode.count();
-  const tickets = await prisma.ticketCode.findMany({
-    orderBy: { createdAt: "desc" },
-    take: TICKET_STATUS_PAGE_SIZE,
-    select: {
-      id: true,
-      code: true,
-      type: true,
-      status: true,
-      email: true,
-      usedAt: true,
-      createdAt: true,
-    },
-  });
-  return { total, tickets };
+  const url = new URL(request.url);
+  const page = Math.max(1, parseInt(url.searchParams.get("page") ?? "1", 10) || 1);
+  const search = url.searchParams.get("search")?.trim() ?? "";
+  const filterType = url.searchParams.get("type")?.trim() ?? "all";
+  const filterStatus = url.searchParams.get("status")?.trim() ?? "all";
+  const sortParam = url.searchParams.get("sort")?.trim() ?? "createdAt_desc";
+
+  const where: Prisma.TicketCodeWhereInput = {};
+  if (search) {
+    where.OR = [
+      { code: { contains: search, mode: "insensitive" } },
+      { email: { contains: search, mode: "insensitive" } },
+    ];
+  }
+  if (filterType !== "all" && (filterType === "Golden" || filterType === "Platinum")) {
+    where.type = filterType;
+  }
+  if (filterStatus !== "all") {
+    where.status = filterStatus;
+  }
+
+  const orderBy: Prisma.TicketCodeOrderByWithRelationInput =
+    sortParam === "code_asc" ? { code: "asc" } :
+    sortParam === "code_desc" ? { code: "desc" } :
+    sortParam === "type_asc" ? { type: "asc" } :
+    sortParam === "type_desc" ? { type: "desc" } :
+    sortParam === "status_asc" ? { status: "asc" } :
+    sortParam === "status_desc" ? { status: "desc" } :
+    sortParam === "createdAt_asc" ? { createdAt: "asc" } :
+    sortParam === "usedAt_desc" ? { usedAt: "desc" } :
+    sortParam === "usedAt_asc" ? { usedAt: "asc" } :
+    { createdAt: "desc" };
+
+  const [total, tickets] = await Promise.all([
+    prisma.ticketCode.count({ where }),
+    prisma.ticketCode.findMany({
+        where,
+        orderBy,
+        skip: (page - 1) * TICKET_STATUS_PAGE_SIZE,
+        take: TICKET_STATUS_PAGE_SIZE,
+        select: {
+          id: true,
+          code: true,
+          type: true,
+          status: true,
+          email: true,
+          usedAt: true,
+          createdAt: true,
+        },
+      }),
+  ]);
+
+  const totalPages = Math.max(1, Math.ceil(total / TICKET_STATUS_PAGE_SIZE));
+  return {
+    total,
+    tickets,
+    page,
+    totalPages,
+    search,
+    filterType,
+    filterStatus,
+    sort: sortParam,
+    sortOptions: SORT_OPTIONS,
+  };
 };
 
 type TicketRow = { code: string; type: string };
@@ -172,25 +235,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 type PlatinumDeliverResult = { success: true } | { success: false; error: string };
 
-function maskCode(code: string): string {
-  if (code.length <= 6) return "****";
-  return code.slice(0, 2) + "****" + code.slice(-2);
-}
-
-function maskEmail(email: string | null): string {
-  if (!email) return "—";
-  const i = email.indexOf("@");
-  if (i <= 2) return "***@***";
-  return email.slice(0, 2) + "***" + email.slice(i);
-}
-
 export default function TicketsImport() {
-  const { total, tickets } = useLoaderData<typeof loader>();
+  const { total, tickets, page, totalPages, search, filterType, filterStatus, sort, sortOptions } = useLoaderData<typeof loader>();
+  const [searchParams, setSearchParams] = useSearchParams();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const shopify = useAppBridge();
   const [file, setFile] = useState<File | null>(null);
   const lastHandledDataRef = useRef<typeof fetcher.data>(undefined);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const data = fetcher.data;
   const isLoading =
@@ -232,6 +285,22 @@ export default function TicketsImport() {
     const formData = new FormData(form);
     formData.set("intent", "platinum_deliver");
     fetcher.submit(formData, { method: "POST" });
+  };
+
+  const updateTableParams = (updates: Record<string, string>) => {
+    const next = new URLSearchParams(searchParams);
+    Object.entries(updates).forEach(([k, v]) => {
+      if (v === "" || v === "all") next.delete(k);
+      else next.set(k, v);
+    });
+    next.set("page", "1");
+    setSearchParams(next);
+  };
+
+  const setPage = (p: number) => {
+    const next = new URLSearchParams(searchParams);
+    next.set("page", String(Math.max(1, Math.min(p, totalPages))));
+    setSearchParams(next);
   };
 
   return (
@@ -340,8 +409,70 @@ export default function TicketsImport() {
 
       <s-section heading="Ticket status">
         <s-paragraph>
-          Recent tickets (latest {tickets.length}). Code and email are partially masked.
+          Total ticket codes: <strong>{total}</strong>
         </s-paragraph>
+        <div style={{ marginBottom: "16px" }}>
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "12px" }}>
+            <input
+              ref={searchInputRef}
+              type="search"
+              placeholder="Search by code or email…"
+              key={`search-${search}`}
+              defaultValue={search}
+              onKeyDown={(e) => e.key === "Enter" && updateTableParams({ search: (e.currentTarget as HTMLInputElement).value })}
+              style={{ padding: "8px 12px", width: "220px" }}
+            />
+            <button
+              type="button"
+              onClick={() => updateTableParams({ search: searchInputRef.current?.value ?? "" })}
+            >
+              Search
+            </button>
+            <label style={{ marginLeft: "8px" }}>
+              Type:{" "}
+              <select
+                value={filterType}
+                onChange={(e) => updateTableParams({ type: e.target.value })}
+                style={{ padding: "6px 8px" }}
+              >
+                <option value="all">All</option>
+                <option value="Golden">Golden</option>
+                <option value="Platinum">Platinum</option>
+              </select>
+            </label>
+            <label style={{ marginLeft: "8px" }}>
+              Status:{" "}
+              <select
+                value={filterStatus}
+                onChange={(e) => updateTableParams({ status: e.target.value })}
+                style={{ padding: "6px 8px" }}
+              >
+                <option value="all">All</option>
+                <option value="ACTIVE">ACTIVE</option>
+                <option value="RESERVED">RESERVED</option>
+                <option value="DISABLED">DISABLED</option>
+                <option value="ACTIVATE">ACTIVATE</option>
+              </select>
+            </label>
+            <label style={{ marginLeft: "8px" }}>
+              Sort:{" "}
+              <select
+                value={sort}
+                onChange={(e) => updateTableParams({ sort: e.target.value })}
+                style={{ padding: "6px 8px", minWidth: "180px" }}
+              >
+                {sortOptions.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <s-button variant="secondary" onClick={() => revalidator.revalidate()}>
+              Refresh
+            </s-button>
+          </div>
+        </div>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "520px" }}>
             <thead>
@@ -358,16 +489,16 @@ export default function TicketsImport() {
               {tickets.length === 0 ? (
                 <tr>
                   <td colSpan={6} style={{ padding: "16px", color: "var(--p-color-text-subdued)" }}>
-                    No tickets yet. Import a CSV to add ticket codes.
+                    {search || filterType !== "all" || filterStatus !== "all" ? "No tickets match the current filters." : "No tickets yet. Import a CSV to add ticket codes."}
                   </td>
                 </tr>
               ) : (
                 tickets.map((t) => (
                   <tr key={t.id} style={{ borderBottom: "1px solid var(--p-color-border)" }}>
-                    <td style={{ padding: "8px 12px", fontFamily: "monospace" }}>{maskCode(t.code)}</td>
+                    <td style={{ padding: "8px 12px", fontFamily: "monospace" }}>{t.code}</td>
                     <td style={{ padding: "8px 12px" }}>{t.type}</td>
                     <td style={{ padding: "8px 12px" }}>{t.status}</td>
-                    <td style={{ padding: "8px 12px" }}>{maskEmail(t.email)}</td>
+                    <td style={{ padding: "8px 12px" }}>{t.email ?? "—"}</td>
                     <td style={{ padding: "8px 12px" }}>{t.usedAt ? new Date(t.usedAt).toLocaleString() : "—"}</td>
                     <td style={{ padding: "8px 12px" }}>{new Date(t.createdAt).toLocaleString()}</td>
                   </tr>
@@ -376,12 +507,25 @@ export default function TicketsImport() {
             </tbody>
           </table>
         </div>
-      </s-section>
-
-      <s-section slot="aside" heading="Total ticket codes">
-        <s-paragraph>
-          Stored in database: <strong>{total}</strong>
-        </s-paragraph>
+        {totalPages > 1 && (
+          <div style={{ marginTop: "16px", display: "flex", alignItems: "center", gap: "8px" }}>
+            <s-button variant="tertiary" disabled={page <= 1} onClick={() => setPage(1)}>
+              First
+            </s-button>
+            <s-button variant="tertiary" disabled={page <= 1} onClick={() => setPage(page - 1)}>
+              Previous
+            </s-button>
+            <span style={{ padding: "0 8px" }}>
+              Page {page} of {totalPages}
+            </span>
+            <s-button variant="tertiary" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>
+              Next
+            </s-button>
+            <s-button variant="tertiary" disabled={page >= totalPages} onClick={() => setPage(totalPages)}>
+              Last
+            </s-button>
+          </div>
+        )}
       </s-section>
     </s-page>
   );
