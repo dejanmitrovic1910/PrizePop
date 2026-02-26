@@ -4,13 +4,16 @@ import type {
   HeadersFunction,
   LoaderFunctionArgs,
 } from "react-router";
-import { useFetcher, useLoaderData, useRevalidator, useSearchParams } from "react-router";
+import { useFetcher, useLoaderData, useLocation, useNavigate, useRevalidator, useSearchParams } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { type Prisma } from "@prisma/client";
 import prisma from "../db.server";
 import { sendPlatinumInfoEmail } from "../email.server";
+import { TicketsTable, type TicketRow } from "../components/TicketsTable";
+import { EditTicketModal } from "../components/EditTicketModal";
+import { AddTicketModal } from "../components/AddTicketModal";
 
 const VALID_TICKET_TYPES = ["Golden", "Platinum"] as const;
 
@@ -103,10 +106,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   };
 };
 
-type TicketRow = { code: string; type: string };
+type CsvTicketRow = { code: string; type: string };
 
-function parseCsvTicketRows(text: string): TicketRow[] {
-  const rows: TicketRow[] = [];
+function parseCsvTicketRows(text: string): CsvTicketRow[] {
+  const rows: CsvTicketRow[] = [];
   const lines = text.split(/\r?\n/).map((line) => line.trim());
   const defaultType = "Golden";
 
@@ -152,6 +155,64 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const formData = await request.formData();
   const intent = String(formData.get("intent") ?? "").trim();
+
+  // ——— Ticket add ———
+  if (intent === "ticket_add") {
+    const code = String(formData.get("code") ?? "").trim().slice(0, 500);
+    const typeRaw = String(formData.get("type") ?? "Golden").trim();
+    const type = typeRaw === "Platinum" ? "Platinum" : "Golden";
+    if (!code) {
+      return { ok: false, error: "Code is required.", imported: 0, skipped: 0, errors: [] as string[], platinumDeliver: null, ticketAction: { intent: "ticket_add", success: false, error: "Code is required." } };
+    }
+    const existing = await prisma.ticketCode.findUnique({ where: { code } });
+    if (existing) {
+      return { ok: false, error: "A ticket with this code already exists.", imported: 0, skipped: 0, errors: [] as string[], platinumDeliver: null, ticketAction: { intent: "ticket_add", success: false, error: "Code already exists." } };
+    }
+    await prisma.ticketCode.create({
+      data: { code, type, status: "ACTIVE" },
+    });
+    return { ok: true, imported: 0, skipped: 0, errors: [] as string[], platinumDeliver: null, ticketAction: { intent: "ticket_add", success: true } };
+  }
+
+  // ——— Ticket edit ———
+  if (intent === "ticket_edit") {
+    const id = String(formData.get("id") ?? "").trim();
+    const code = String(formData.get("code") ?? "").trim().slice(0, 500);
+    const typeRaw = String(formData.get("type") ?? "").trim();
+    const statusVal = String(formData.get("status") ?? "").trim();
+    if (!id) {
+      return { ok: false, error: "Ticket ID is required.", imported: 0, skipped: 0, errors: [] as string[], platinumDeliver: null, ticketAction: { intent: "ticket_edit", success: false, error: "ID required." } };
+    }
+    const existing = await prisma.ticketCode.findUnique({ where: { id } });
+    if (!existing) {
+      return { ok: false, error: "Ticket not found.", imported: 0, skipped: 0, errors: [] as string[], platinumDeliver: null, ticketAction: { intent: "ticket_edit", success: false, error: "Ticket not found." } };
+    }
+    const updates: { code?: string; type?: "Golden" | "Platinum"; status?: string } = {};
+    if (code && code !== existing.code) {
+      const duplicate = await prisma.ticketCode.findUnique({ where: { code } });
+      if (duplicate) {
+        return { ok: false, error: "Another ticket already has this code.", imported: 0, skipped: 0, errors: [] as string[], platinumDeliver: null, ticketAction: { intent: "ticket_edit", success: false, error: "Code already in use." } };
+      }
+      updates.code = code;
+    } else if (code) updates.code = code;
+    if (typeRaw === "Platinum" || typeRaw === "Golden") updates.type = typeRaw;
+    if (["ACTIVE", "RESERVED", "DISABLED", "ACTIVATE"].includes(statusVal)) updates.status = statusVal;
+    if (Object.keys(updates).length === 0) {
+      return { ok: true, imported: 0, skipped: 0, errors: [] as string[], platinumDeliver: null, ticketAction: { intent: "ticket_edit", success: true } };
+    }
+    await prisma.ticketCode.update({ where: { id }, data: updates });
+    return { ok: true, imported: 0, skipped: 0, errors: [] as string[], platinumDeliver: null, ticketAction: { intent: "ticket_edit", success: true } };
+  }
+
+  // ——— Ticket remove ———
+  if (intent === "ticket_remove") {
+    const id = String(formData.get("id") ?? "").trim();
+    if (!id) {
+      return { ok: false, error: "Ticket ID is required.", imported: 0, skipped: 0, errors: [] as string[], platinumDeliver: null, ticketAction: { intent: "ticket_remove", success: false, error: "ID required." } };
+    }
+    await prisma.ticketCode.delete({ where: { id } }).catch(() => null);
+    return { ok: true, imported: 0, skipped: 0, errors: [] as string[], platinumDeliver: null, ticketAction: { intent: "ticket_remove", success: true } };
+  }
 
   // ——— Platinum info deliver ———
   if (intent === "platinum_deliver") {
@@ -201,25 +262,33 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   const errors: string[] = [];
+  const skippedCodes: string[] = [];
   let imported = 0;
   let skipped = 0;
 
   for (const row of rows) {
     try {
-      await prisma.ticketCode.upsert({
+      const existing = await prisma.ticketCode.findUnique({
         where: { code: row.code },
-        create: {
+      });
+      if (existing) {
+        skipped++;
+        if (skippedCodes.length < 50) skippedCodes.push(row.code);
+        continue;
+      }
+      await prisma.ticketCode.create({
+        data: {
           code: row.code,
           type: parseTicketType(row.type),
           status: "ACTIVE",
         },
-        update: {},
       });
       imported++;
     } catch (e) {
       skipped++;
       const msg = e instanceof Error ? e.message : String(e);
       if (errors.length < 20) errors.push(`"${row.code}": ${msg}`);
+      if (skippedCodes.length < 50) skippedCodes.push(row.code);
     }
   }
 
@@ -227,6 +296,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     ok: true,
     imported,
     skipped,
+    skippedCodes: skippedCodes.slice(0, 50),
     total: rows.length,
     errors: errors.slice(0, 20),
     platinumDeliver: null,
@@ -236,14 +306,41 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 type PlatinumDeliverResult = { success: true } | { success: false; error: string };
 
 export default function TicketsImport() {
-  const { total, tickets, page, totalPages, search, filterType, filterStatus, sort, sortOptions } = useLoaderData<typeof loader>();
+  const { total, tickets, page, totalPages, search, filterType, filterStatus, sort } = useLoaderData<typeof loader>();
   const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
+  const navigate = useNavigate();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const shopify = useAppBridge();
   const [file, setFile] = useState<File | null>(null);
   const lastHandledDataRef = useRef<typeof fetcher.data>(undefined);
-  const searchInputRef = useRef<HTMLInputElement>(null);
+  const [searchInputValue, setSearchInputValue] = useState(search);
+  const [editingTicket, setEditingTicket] = useState<TicketRow | null>(null);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const editModalRef = useRef<HTMLElement & { showOverlay?: () => void; hideOverlay?: () => void }>(null);
+  const addModalRef = useRef<HTMLElement & { showOverlay?: () => void; hideOverlay?: () => void }>(null);
+
+  // Keep search input in sync with URL when loader search changes
+  useEffect(() => {
+    setSearchInputValue(search);
+  }, [search]);
+
+  // Show edit modal when editingTicket is set
+  useEffect(() => {
+    if (editingTicket) {
+      editModalRef.current?.showOverlay?.();
+    }
+  }, [editingTicket]);
+
+  const handleRefresh = () => {
+    revalidator.revalidate();
+    navigate(location.pathname + (searchParams.toString() ? "?" + searchParams.toString() : ""), { replace: true });
+  };
+
+  const handleSearchSubmit = () => {
+    updateTableParams({ search: searchInputValue });
+  };
 
   const data = fetcher.data;
   const isLoading =
@@ -253,6 +350,17 @@ export default function TicketsImport() {
   useEffect(() => {
     if (fetcher.state !== "idle" || !data || data === lastHandledDataRef.current) return;
     lastHandledDataRef.current = data;
+    const ticketAction = (data as { ticketAction?: { intent: string; success: boolean; error?: string } })?.ticketAction;
+    if (ticketAction) {
+      if (ticketAction.success) {
+        const msg = ticketAction.intent === "ticket_add" ? "Ticket added." : ticketAction.intent === "ticket_edit" ? "Ticket updated." : "Ticket removed.";
+        shopify.toast?.show?.(msg);
+        revalidator.revalidate();
+      } else {
+        shopify.toast?.show?.(ticketAction.error ?? "Action failed.", { isError: true });
+      }
+      return;
+    }
     if (data.platinumDeliver) {
       if (data.platinumDeliver.success) {
         shopify.toast?.show?.("Platinum info email sent.");
@@ -265,6 +373,7 @@ export default function TicketsImport() {
     if (data.ok && data.imported > 0) {
       shopify.toast?.show?.(`Imported ${data.imported} ticket code(s)`);
       revalidator.revalidate();
+      setFile(null);
     }
     if (data.error && !data.platinumDeliver) {
       shopify.toast?.show?.(data.error, { isError: true });
@@ -287,6 +396,36 @@ export default function TicketsImport() {
     fetcher.submit(formData, { method: "POST" });
   };
 
+  const handleAddTicket = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const formData = new FormData(form);
+    formData.set("intent", "ticket_add");
+    fetcher.submit(formData, { method: "POST" });
+    form.reset();
+    addModalRef.current?.hideOverlay?.();
+    setShowAddModal(false);
+  };
+
+  const handleEditTicket = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const formData = new FormData(form);
+    formData.set("intent", "ticket_edit");
+    formData.set("id", editingTicket!.id);
+    fetcher.submit(formData, { method: "POST" });
+    editModalRef.current?.hideOverlay?.();
+    setEditingTicket(null);
+  };
+
+  const handleRemoveTicket = (t: TicketRow) => {
+    if (!confirm(`Remove ticket "${t.code}"? This cannot be undone.`)) return;
+    const formData = new FormData();
+    formData.set("intent", "ticket_remove");
+    formData.set("id", t.id);
+    fetcher.submit(formData, { method: "POST" });
+  };
+
   const updateTableParams = (updates: Record<string, string>) => {
     const next = new URLSearchParams(searchParams);
     Object.entries(updates).forEach(([k, v]) => {
@@ -305,7 +444,7 @@ export default function TicketsImport() {
 
   return (
     <s-page heading="Import ticket codes">
-      <s-section heading="Platinum info delivery">
+      {/* <s-section heading="Platinum info delivery">
         <s-paragraph>
           Enter a valid Platinum ticket code and the email address to send the platinum information to. The ticket code will be validated before sending.
         </s-paragraph>
@@ -343,7 +482,7 @@ export default function TicketsImport() {
             </s-button>
           </s-stack>
         </form>
-      </s-section>
+      </s-section> */}
 
       <s-section heading="Upload CSV">
         <s-paragraph>
@@ -354,12 +493,26 @@ export default function TicketsImport() {
         </s-paragraph>
         <form onSubmit={handleCsvSubmit}>
           <s-stack direction="block" gap="base">
-            <input
-              type="file"
+            <s-drop-zone
+              label="Drop CSV file to upload"
+              accessibilityLabel="Upload CSV file with ticket codes"
               accept=".csv,text/csv,text/plain"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-              style={{ padding: "8px" }}
+              name="csv"
+              value=""
+              onInput={(e: { currentTarget?: { files?: File[] } }) => {
+                const files = e.currentTarget?.files;
+                if (files?.length) setFile(files[0]);
+              }}
+              onChange={(e: { currentTarget?: { files?: File[] } }) => {
+                const files = e.currentTarget?.files;
+                if (files?.length) setFile(files[0]);
+              }}
             />
+            {file && (
+              <span style={{ color: "var(--p-color-text-subdued)", fontSize: "14px" }}>
+                Selected: {file.name}
+              </span>
+            )}
             <s-button
               type="submit"
               variant="primary"
@@ -378,13 +531,29 @@ export default function TicketsImport() {
             <s-stack direction="block" gap="base">
               <s-paragraph>
                 Imported: <strong>{data.imported}</strong>
-                {data.skipped > 0 && (
+                {data.skipped != null && data.skipped > 0 && (
                   <> · Skipped (duplicates/errors): <strong>{data.skipped}</strong></>
                 )}
                 {data.total != null && (
                   <> · Total rows in file: <strong>{data.total}</strong></>
                 )}
               </s-paragraph>
+              {data.skippedCodes && data.skippedCodes.length > 0 && (
+                <s-box
+                  padding="base"
+                  borderWidth="base"
+                  borderRadius="base"
+                  background="subdued"
+                >
+                  <strong>Skipped codes (not imported):</strong>
+                  <p style={{ margin: "6px 0 0", fontFamily: "monospace", fontSize: "13px" }}>
+                    {data.skippedCodes.join(", ")}
+                    {data.skipped != null && data.skipped > data.skippedCodes.length && (
+                      <> … and {data.skipped - data.skippedCodes.length} more</>
+                    )}
+                  </p>
+                </s-box>
+              )}
               {data.errors && data.errors.length > 0 && (
                 <s-box
                   padding="base"
@@ -409,124 +578,49 @@ export default function TicketsImport() {
 
       <s-section heading="Ticket status">
         <s-paragraph>
-          Total ticket codes: <strong>{total}</strong>
+          Total ticket codes in DB: <strong>{total}</strong>
+          {total > 0 && (
+            <> · Showing <strong>{tickets.length}</strong> on this page</>
+          )}
         </s-paragraph>
-        <div style={{ marginBottom: "16px" }}>
-          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "12px" }}>
-            <input
-              ref={searchInputRef}
-              type="search"
-              placeholder="Search by code or email…"
-              key={`search-${search}`}
-              defaultValue={search}
-              onKeyDown={(e) => e.key === "Enter" && updateTableParams({ search: (e.currentTarget as HTMLInputElement).value })}
-              style={{ padding: "8px 12px", width: "220px" }}
-            />
-            <button
-              type="button"
-              onClick={() => updateTableParams({ search: searchInputRef.current?.value ?? "" })}
-            >
-              Search
-            </button>
-            <label style={{ marginLeft: "8px" }}>
-              Type:{" "}
-              <select
-                value={filterType}
-                onChange={(e) => updateTableParams({ type: e.target.value })}
-                style={{ padding: "6px 8px" }}
-              >
-                <option value="all">All</option>
-                <option value="Golden">Golden</option>
-                <option value="Platinum">Platinum</option>
-              </select>
-            </label>
-            <label style={{ marginLeft: "8px" }}>
-              Status:{" "}
-              <select
-                value={filterStatus}
-                onChange={(e) => updateTableParams({ status: e.target.value })}
-                style={{ padding: "6px 8px" }}
-              >
-                <option value="all">All</option>
-                <option value="ACTIVE">ACTIVE</option>
-                <option value="RESERVED">RESERVED</option>
-                <option value="DISABLED">DISABLED</option>
-                <option value="ACTIVATE">ACTIVATE</option>
-              </select>
-            </label>
-            <label style={{ marginLeft: "8px" }}>
-              Sort:{" "}
-              <select
-                value={sort}
-                onChange={(e) => updateTableParams({ sort: e.target.value })}
-                style={{ padding: "6px 8px", minWidth: "180px" }}
-              >
-                {sortOptions.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <s-button variant="secondary" onClick={() => revalidator.revalidate()}>
-              Refresh
-            </s-button>
-          </div>
-        </div>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "520px" }}>
-            <thead>
-              <tr style={{ borderBottom: "2px solid var(--p-color-border)", textAlign: "left" }}>
-                <th style={{ padding: "8px 12px" }}>Code</th>
-                <th style={{ padding: "8px 12px" }}>Type</th>
-                <th style={{ padding: "8px 12px" }}>Status</th>
-                <th style={{ padding: "8px 12px" }}>Email</th>
-                <th style={{ padding: "8px 12px" }}>Used at</th>
-                <th style={{ padding: "8px 12px" }}>Created</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tickets.length === 0 ? (
-                <tr>
-                  <td colSpan={6} style={{ padding: "16px", color: "var(--p-color-text-subdued)" }}>
-                    {search || filterType !== "all" || filterStatus !== "all" ? "No tickets match the current filters." : "No tickets yet. Import a CSV to add ticket codes."}
-                  </td>
-                </tr>
-              ) : (
-                tickets.map((t) => (
-                  <tr key={t.id} style={{ borderBottom: "1px solid var(--p-color-border)" }}>
-                    <td style={{ padding: "8px 12px", fontFamily: "monospace" }}>{t.code}</td>
-                    <td style={{ padding: "8px 12px" }}>{t.type}</td>
-                    <td style={{ padding: "8px 12px" }}>{t.status}</td>
-                    <td style={{ padding: "8px 12px" }}>{t.email ?? "—"}</td>
-                    <td style={{ padding: "8px 12px" }}>{t.usedAt ? new Date(t.usedAt).toLocaleString() : "—"}</td>
-                    <td style={{ padding: "8px 12px" }}>{new Date(t.createdAt).toLocaleString()}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-        {totalPages > 1 && (
-          <div style={{ marginTop: "16px", display: "flex", alignItems: "center", gap: "8px" }}>
-            <s-button variant="tertiary" disabled={page <= 1} onClick={() => setPage(1)}>
-              First
-            </s-button>
-            <s-button variant="tertiary" disabled={page <= 1} onClick={() => setPage(page - 1)}>
-              Previous
-            </s-button>
-            <span style={{ padding: "0 8px" }}>
-              Page {page} of {totalPages}
-            </span>
-            <s-button variant="tertiary" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>
-              Next
-            </s-button>
-            <s-button variant="tertiary" disabled={page >= totalPages} onClick={() => setPage(totalPages)}>
-              Last
-            </s-button>
-          </div>
-        )}
+
+        <TicketsTable
+          tickets={tickets}
+          total={total}
+          page={page}
+          totalPages={totalPages}
+          search={search}
+          searchInputValue={searchInputValue}
+          onSearchInputChange={setSearchInputValue}
+          onSearchSubmit={handleSearchSubmit}
+          filterType={filterType}
+          filterStatus={filterStatus}
+          onFilterChange={(updates) => updateTableParams(updates)}
+          sort={sort}
+          onSortChange={(sortValue) => updateTableParams({ sort: sortValue })}
+          onPageChange={setPage}
+          onEdit={setEditingTicket}
+          onRemove={handleRemoveTicket}
+          onRefresh={handleRefresh}
+          onAddTicketClick={() => setShowAddModal(true)}
+          isLoading={isLoading}
+        />
       </s-section>
+
+      <EditTicketModal
+        ref={editModalRef}
+        ticket={editingTicket}
+        onClose={() => setEditingTicket(null)}
+        onSubmit={handleEditTicket}
+        isLoading={isLoading}
+      />
+      <AddTicketModal
+        ref={addModalRef}
+        open={showAddModal}
+        onClose={() => setShowAddModal(false)}
+        onSubmit={handleAddTicket}
+        isLoading={isLoading}
+      />
     </s-page>
   );
 }
