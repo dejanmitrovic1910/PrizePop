@@ -19,9 +19,13 @@ api_version = "2026-04"
   topics = [ "app/uninstalled" ]
   uri = "/webhooks/app/uninstalled"
 
+  [[webhooks.subscriptions]]
+  topics = [ "orders/paid" ]
+  uri = "/redeem/orders-paid"
+
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "write_app_proxy,write_products"
+scopes = "write_app_proxy,write_products,read_orders"
 
 [auth]
 redirect_urls = [
