@@ -85,6 +85,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return json({ error: "Invalid webhook signature" }, { status: 401 });
     }
 
+    console.log("rawBody", rawBody);
     const order = JSON.parse(rawBody) as ShopifyOrder;
     const lineItems = order.line_items ?? [];
     const orderId = order.id != null ? String(order.id) : null;
