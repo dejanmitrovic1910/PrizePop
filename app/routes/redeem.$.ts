@@ -85,7 +85,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
 
       if (ticket.status !== "ACTIVE") {
-        throw new Error("This ticket has already been used or reserved.");
+        throw new Error("This ticket has already been used.");
       }
 
       // 3.2 Find available or expired-reserved prize
@@ -133,15 +133,29 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         },
       });
 
-      // 3.4 Reserved prizes from ticket only (no Prize table): reservedPrizeId + this row's status (e.g. RESERVED, DISABLED)
-      const reservedPrizes: { prizeId: string; status: string, reservationExpiresAt: Date }[] = [];
-      if (updatedTicket.reservedPrizeId) {
-        reservedPrizes.push({
-          prizeId: updatedTicket.reservedPrizeId,
-          status: updatedTicket.status,
-          reservationExpiresAt: updatedTicket.reservationExpiresAt!,
-        });
-      }
+      // 3.4 Find all reserved prizes from the ticketCode table (active reservations only)
+      const ticketsWithReservedPrize = await tx.ticketCode.findMany({
+        where: {
+          reservedPrizeId: { not: null },
+          reservationExpiresAt: { gt: now },
+        },
+        select: {
+          reservedPrizeId: true,
+          status: true,
+          reservationExpiresAt: true,
+        },
+      });
+
+      const reservedPrizes: { prizeId: string; status: string; reservationExpiresAt: Date }[] =
+        ticketsWithReservedPrize
+          .filter((t): t is typeof t & { reservedPrizeId: string; reservationExpiresAt: Date } =>
+            t.reservedPrizeId != null && t.reservationExpiresAt != null
+          )
+          .map((t) => ({
+            prizeId: t.reservedPrizeId,
+            status: t.status,
+            reservationExpiresAt: t.reservationExpiresAt,
+          }));
 
       return { ticket: updatedTicket, expiresAt, reservedPrizes };
     });

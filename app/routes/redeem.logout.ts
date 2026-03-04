@@ -40,7 +40,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const { ticketId } = payload;
     if (!ticketId) {
       return json(
-        { success: false, message: "Invalid or expired token." },
+        { success: false, message: "Invalid token" },
         { status: 403 }
       );
     }
@@ -51,9 +51,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     if (!ticket) {
       return json(
-        { success: false, message: "Invalid or expired token." },
+        { success: false, message: "Invalid token, can't find ticket." },
         { status: 403 }
       );
+    }
+
+    if (ticket.status === "DISABLED") {
+      return json({ success: true, message: "This ticket has already been used." });
     }
 
     await prisma.ticketCode.update({
