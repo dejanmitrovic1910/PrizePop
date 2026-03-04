@@ -46,9 +46,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   try {
-    const body = (await request.json()) as { token?: string; variantId?: string };
-    const token = body.token?.trim();
-    const prizeId = body.variantId?.trim();
+    const body = (await request.json()) as { token?: string; variantId?: string | number };
+    const token = body.token != null ? String(body.token).trim() : undefined;
+    const prizeId = body.variantId != null ? String(body.variantId).trim() : undefined;
 
     if (!token) {
       return json(

@@ -137,6 +137,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       where: {
         reservedPrizeId: prizeId,
         reservationExpiresAt: { gt: now },
+        // Only consider "someone else's cart"
+        id: { not: ticketId },
       },
     });
     if (inCart) {
@@ -148,7 +150,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         reservedPrizes: buildReservedPrizesFromTicket(ticket),
       });
       return json(
-        { success: false, message: "This product is already in a cart.", token: updatedToken },
+        { success: false, message: "This product is already in someone else's cart.", token: updatedToken },
         { status: 400 }
       );
     }
