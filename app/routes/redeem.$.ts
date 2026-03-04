@@ -137,7 +137,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const ticketsWithReservedPrize = await tx.ticketCode.findMany({
         where: {
           reservedPrizeId: { not: null },
-          reservationExpiresAt: { gt: now },
+          OR: [
+            { status: "DISABLED" },
+            { reservationExpiresAt: { gt: now } },
+          ],
         },
         select: {
           reservedPrizeId: true,
@@ -148,13 +151,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       const reservedPrizes: { prizeId: string; status: string; reservationExpiresAt: Date }[] =
         ticketsWithReservedPrize
-          .filter((t): t is typeof t & { reservedPrizeId: string; reservationExpiresAt: Date } =>
-            t.reservedPrizeId != null && t.reservationExpiresAt != null
-          )
+          .filter((t): t is typeof t & { reservedPrizeId: string } => t.reservedPrizeId != null)
           .map((t) => ({
             prizeId: t.reservedPrizeId,
             status: t.status,
-            reservationExpiresAt: t.reservationExpiresAt,
+            reservationExpiresAt: t.reservationExpiresAt ?? new Date(0),
           }));
 
       return { ticket: updatedTicket, expiresAt, reservedPrizes };
