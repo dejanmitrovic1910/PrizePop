@@ -137,7 +137,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       where: {
         reservedPrizeId: prizeId,
         reservationExpiresAt: { gt: now },
-        // Only consider "someone else's cart"
         id: { not: ticketId },
       },
     });
