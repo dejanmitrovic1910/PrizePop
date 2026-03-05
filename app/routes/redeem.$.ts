@@ -88,6 +88,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         throw new Error("This ticket has already been used.");
       }
 
+      // Ticket is ACTIVE but in use by someone else (different email) and session not expired
+      if (
+        ticket.email &&
+        ticket.email.trim().toLowerCase() !== email.trim().toLowerCase() &&
+        ticket.expiresAt &&
+        ticket.expiresAt > now
+      ) {
+        throw new Error("This ticket is already in use by someone else.");
+      }
+
       // 3.2 Find available or expired-reserved prize
       // const prize = await tx.prize.findFirst({
       //   where: {
