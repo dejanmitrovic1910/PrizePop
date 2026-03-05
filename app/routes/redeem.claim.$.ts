@@ -1,37 +1,16 @@
 import { json } from "@remix-run/node";
 import type { ActionFunctionArgs } from "@remix-run/node";
-import jwt from "jsonwebtoken";
 import prisma from "../db.server";
 import { scheduleReleaseAfter15Min } from "../release-timer.server";
+import {
+  verifyAndValidateRedeemToken,
+  clearExpiredReservations,
+  buildTokenPayloadFromTicket,
+  buildReservedPrizesFromTicket,
+  signRedeemToken,
+} from "../redeem.server";
 
-const JWT_SECRET = process.env.SHOPIFY_API_SECRET ?? process.env.JWT_SECRET ?? "fallback-secret";
-const REDEEM_TOKEN_EXPIRY_SECONDS = 120 * 60; // 2 hours (match redeem.$.ts)
-const RESERVATION_WINDOW_MS = 15 * 60 * 1000; // 15 minutes – reservation is liberated after this
-
-type TokenPayload = {
-  ticketId: string;
-  email: string;
-  ticketType?: string;
-  expireTime?: string;
-  reservedPrizes?: { prizeId: string; status: string; reservationExpiresAt: string }[];
-  exp?: number;
-};
-
-function buildReservedPrizesFromTicket(ticket: { reservedPrizeId: string | null; status: string; reservationExpiresAt: Date | null }) {
-  const reservedPrizes: { prizeId: string; status: string; reservationExpiresAt: string }[] = [];
-  if (ticket.reservedPrizeId && ticket.reservationExpiresAt) {
-    reservedPrizes.push({
-      prizeId: ticket.reservedPrizeId,
-      status: ticket.status,
-      reservationExpiresAt: ticket.reservationExpiresAt.toISOString(),
-    });
-  }
-  return reservedPrizes;
-}
-
-function signToken(payload: Omit<TokenPayload, "exp">) {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: REDEEM_TOKEN_EXPIRY_SECONDS });
-}
+const RESERVATION_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   if (request.method !== "POST") {
@@ -39,10 +18,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   try {
-    let body: { token?: string; variant_id?: string };
-    body = await request.json();
-    
-
+    const body = (await request.json()) as { token?: string; variant_id?: string };
     const token = body.token?.trim();
     const prizeId = body.variant_id?.trim();
 
@@ -60,76 +36,31 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       );
     }
 
-    let payload: TokenPayload;
-    try {
-      payload = jwt.verify(token, JWT_SECRET) as TokenPayload;
-    } catch {
+    const validation = await verifyAndValidateRedeemToken(token);
+    if (!validation.ok) {
       return json(
-        { success: false, message: "Invalid token." },
+        { success: false, message: validation.message },
         { status: 401 }
       );
     }
 
-    const { ticketId, email } = payload;
+    const { payload, ticket } = validation;
     const now = new Date();
-    if (!ticketId || !email) {
-      return json(
-        { success: false, message: "Invalid or expired token." },
-        { status: 401 }
+
+    await clearExpiredReservations();
+
+    const refreshedToken = () =>
+      signRedeemToken(
+        buildTokenPayloadFromTicket(payload, ticket, buildReservedPrizesFromTicket(ticket))
       );
-    }
-
-    // Clear expired reservations (after 15 min): if ticket not used, remove email, expiresAt, reservedPrizeId, reservationExpiresAt
-    await prisma.ticketCode.updateMany({
-      where: {
-        status: { not: "DISABLED" },
-        reservationExpiresAt: { lt: now },
-        usedAt: null,
-        usedOrderId: null,
-      },
-      data: {
-        email: null,
-        expiresAt: null,
-        reservedPrizeId: null,
-        reservationExpiresAt: null,
-      },
-    });
-
-    const ticket = await prisma.ticketCode.findUnique({
-      where: { id: ticketId },
-    });
-
-    if (!ticket) {
-      return json(
-        { success: false, message: "Ticket not found." },
-        { status: 404 }
-      );
-    }
-
-    if (ticket.email !== email) {
-      const updatedToken = signToken({
-        ticketId,
-        email,
-        ticketType: payload.ticketType,
-        expireTime: payload.expireTime,
-        reservedPrizes: buildReservedPrizesFromTicket(ticket),
-      });
-      return json(
-        { success: false, message: "Ticket and email do not match.", token: updatedToken },
-        { status: 403 }
-      );
-    }
 
     if (ticket.usedAt ?? ticket.usedOrderId) {
-      const updatedToken = signToken({
-        ticketId,
-        email,
-        ticketType: payload.ticketType,
-        expireTime: payload.expireTime,
-        reservedPrizes: buildReservedPrizesFromTicket(ticket),
-      });
       return json(
-        { success: false, message: "This ticket has already been used.", token: updatedToken },
+        {
+          success: false,
+          message: "This ticket has already been used.",
+          token: refreshedToken(),
+        },
         { status: 400 }
       );
     }
@@ -138,24 +69,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       where: {
         reservedPrizeId: prizeId,
         reservationExpiresAt: { gt: now },
-        id: { not: ticketId },
+        id: { not: payload.ticketId },
       },
     });
     if (inCart) {
-      const updatedToken = signToken({
-        ticketId,
-        email,
-        ticketType: payload.ticketType,
-        expireTime: payload.expireTime,
-        reservedPrizes: buildReservedPrizesFromTicket(ticket),
-      });
       return json(
-        { success: false, message: "This product is already in someone else's cart.", token: updatedToken },
+        {
+          success: false,
+          message: "This product is already in someone else's cart.",
+          token: refreshedToken(),
+        },
         { status: 400 }
       );
     }
 
-    // Whole table: is this prize already sold (any ticket used with this prize)?
     const alreadySold = await prisma.ticketCode.findFirst({
       where: {
         reservedPrizeId: prizeId,
@@ -163,34 +90,38 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       },
     });
     if (alreadySold) {
-      const updatedToken = signToken({
-        ticketId,
-        email,
-        ticketType: payload.ticketType,
-        expireTime: payload.expireTime,
-        reservedPrizes: buildReservedPrizesFromTicket(ticket),
-      });
       return json(
-        { success: false, message: "This product has already been sold.", token: updatedToken },
+        {
+          success: false,
+          message: "This product has already been sold.",
+          token: refreshedToken(),
+        },
         { status: 400 }
       );
     }
 
     const reservationExpiresAt = new Date(Date.now() + RESERVATION_WINDOW_MS);
 
-    await prisma.ticketCode.update({
-      where: { id: ticketId },
+    const updated = await prisma.ticketCode.update({
+      where: { id: payload.ticketId },
       data: {
         reservedPrizeId: prizeId,
         reservationExpiresAt,
       },
     });
 
-    scheduleReleaseAfter15Min(ticketId, prizeId);
+    scheduleReleaseAfter15Min(payload.ticketId, prizeId);
+
+    const tokenPayload = buildTokenPayloadFromTicket(
+      payload,
+      updated as typeof ticket,
+      buildReservedPrizesFromTicket(updated)
+    );
 
     return json({
       success: true,
       message: "Successfully added to cart.",
+      token: signRedeemToken(tokenPayload),
     });
   } catch (error: unknown) {
     return json(

@@ -1,11 +1,8 @@
 import { json } from "@remix-run/node";
 import type { ActionFunctionArgs } from "@remix-run/node";
 import crypto from "crypto";
-import jwt from "jsonwebtoken";
 import prisma from "../db.server";
-
-const JWT_SECRET = process.env.SHOPIFY_API_SECRET ?? process.env.JWT_SECRET ?? "fallback-secret";
-const REDEEM_TOKEN_EXPIRY_SECONDS = 120 * 60; // 2 hours
+import { signRedeemToken } from "../redeem.server";
 
 // 🔐 VERIFY SHOPIFY APP PROXY SIGNATURE
 function verifyProxySignature(url: URL) {
@@ -175,22 +172,25 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const expiresAt = result.expiresAt;
     const ticketType = result.ticket.type;
     const ticketId = result.ticket.id;
-    const reservedPrizes = result.reservedPrizes;
-    const payload = {
-      success: true,
-      message: "Ticket is valid, please select a prize.",
-      ticketId, // ticket code id for claim verification
+    const reservedPrizes = result.reservedPrizes.map((p) => ({
+      prizeId: p.prizeId,
+      status: p.status,
+      reservationExpiresAt:
+        p.reservationExpiresAt instanceof Date
+          ? p.reservationExpiresAt.toISOString()
+          : String(p.reservationExpiresAt),
+    }));
+    const token = signRedeemToken({
+      ticketId,
       ticketType,
       email,
       expireTime: expiresAt.toISOString(),
-      reservedPrizes, // { prizeId, status }[] for frontend lock and out-of-stock prevention
-    };
-    const token = jwt.sign(payload, JWT_SECRET, {
-      expiresIn: REDEEM_TOKEN_EXPIRY_SECONDS,
+      reservedPrizes,
     });
 
     return json({
-      ...payload,
+      success: true,
+      message: "Ticket is valid, please select a prize.",
       token,
     });
   } catch (error: any) {

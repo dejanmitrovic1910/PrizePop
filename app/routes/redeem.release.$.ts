@@ -1,40 +1,13 @@
 import { json } from "@remix-run/node";
 import type { ActionFunctionArgs } from "@remix-run/node";
-import jwt from "jsonwebtoken";
 import prisma from "../db.server";
 import { clearReleaseTimer } from "../release-timer.server";
-
-const JWT_SECRET = process.env.SHOPIFY_API_SECRET ?? process.env.JWT_SECRET ?? "fallback-secret";
-const REDEEM_TOKEN_EXPIRY_SECONDS = 120 * 60; // 2 hours (match redeem.$.ts)
-
-type TokenPayload = {
-  ticketId: string;
-  email: string;
-  ticketType?: string;
-  expireTime?: string;
-  reservedPrizes?: { prizeId: string; status: string; reservationExpiresAt: string }[];
-  exp?: number;
-};
-
-function buildReservedPrizesFromTicket(ticket: {
-  reservedPrizeId: string | null;
-  status: string;
-  reservationExpiresAt: Date | null;
-}) {
-  const reservedPrizes: { prizeId: string; status: string; reservationExpiresAt: string }[] = [];
-  if (ticket.reservedPrizeId && ticket.reservationExpiresAt) {
-    reservedPrizes.push({
-      prizeId: ticket.reservedPrizeId,
-      status: ticket.status,
-      reservationExpiresAt: ticket.reservationExpiresAt.toISOString(),
-    });
-  }
-  return reservedPrizes;
-}
-
-function signToken(payload: Omit<TokenPayload, "exp">) {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: REDEEM_TOKEN_EXPIRY_SECONDS });
-}
+import {
+  verifyAndValidateRedeemToken,
+  buildReservedPrizesFromTicket,
+  buildTokenPayloadFromTicket,
+  signRedeemToken,
+} from "../redeem.server";
 
 /**
  * Called when the user removes the prize from the cart.
@@ -65,60 +38,40 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       );
     }
 
-    let payload: TokenPayload;
-    try {
-      payload = jwt.verify(token, JWT_SECRET) as TokenPayload;
-    } catch {
+    const validation = await verifyAndValidateRedeemToken(token);
+    if (!validation.ok) {
       return json(
-        { success: false, message: "Invalid token." },
+        { success: false, message: validation.message },
         { status: 401 }
       );
     }
 
-    const { ticketId } = payload;
-    if (!ticketId) {
-      return json(
-        { success: false, message: "Invalid or expired token." },
-        { status: 401 }
-      );
-    }
-
-    const ticket = await prisma.ticketCode.findUnique({
-      where: { id: ticketId },
-    });
-
-    if (!ticket) {
-      return json(
-        { success: false, message: "Ticket not found." },
-        { status: 404 }
-      );
-    }
+    const { payload, ticket } = validation;
 
     let ticketForToken = ticket;
-    // Only clear if this ticket currently has this prize reserved (stop the 15-min counting)
     if (ticket.reservedPrizeId === prizeId) {
-      clearReleaseTimer(ticketId);
-      ticketForToken = await prisma.ticketCode.update({
-        where: { id: ticketId },
+      clearReleaseTimer(ticket.id);
+      const updated = await prisma.ticketCode.update({
+        where: { id: ticket.id },
         data: {
           reservedPrizeId: null,
           reservationExpiresAt: null,
         },
       });
+      ticketForToken = updated as typeof ticket;
     }
 
-    const updatedToken = signToken({
-      ticketId,
-      email: payload.email,
-      ticketType: payload.ticketType,
-      expireTime: payload.expireTime,
-      reservedPrizes: buildReservedPrizesFromTicket(ticketForToken),
-    });
+    const newPayload = buildTokenPayloadFromTicket(
+      payload,
+      ticketForToken,
+      buildReservedPrizesFromTicket(ticketForToken)
+    );
+    const newToken = signRedeemToken(newPayload);
 
     return json({
       success: true,
       message: "Reservation released.",
-      token: updatedToken,
+      token: newToken,
     });
   } catch (error: unknown) {
     return json(
