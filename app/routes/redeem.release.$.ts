@@ -2,6 +2,7 @@ import { json } from "@remix-run/node";
 import type { ActionFunctionArgs } from "@remix-run/node";
 import jwt from "jsonwebtoken";
 import prisma from "../db.server";
+import { clearReleaseTimer } from "../release-timer.server";
 
 const JWT_SECRET = process.env.SHOPIFY_API_SECRET ?? process.env.JWT_SECRET ?? "fallback-secret";
 const REDEEM_TOKEN_EXPIRY_SECONDS = 120 * 60; // 2 hours (match redeem.$.ts)
@@ -96,6 +97,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     let ticketForToken = ticket;
     // Only clear if this ticket currently has this prize reserved (stop the 15-min counting)
     if (ticket.reservedPrizeId === prizeId) {
+      clearReleaseTimer(ticketId);
       ticketForToken = await prisma.ticketCode.update({
         where: { id: ticketId },
         data: {

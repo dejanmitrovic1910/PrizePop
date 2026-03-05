@@ -2,6 +2,7 @@ import { json } from "@remix-run/node";
 import type { ActionFunctionArgs } from "@remix-run/node";
 import jwt from "jsonwebtoken";
 import prisma from "../db.server";
+import { scheduleReleaseAfter15Min } from "../release-timer.server";
 
 const JWT_SECRET = process.env.SHOPIFY_API_SECRET ?? process.env.JWT_SECRET ?? "fallback-secret";
 const REDEEM_TOKEN_EXPIRY_SECONDS = 120 * 60; // 2 hours (match redeem.$.ts)
@@ -184,6 +185,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         reservationExpiresAt,
       },
     });
+
+    scheduleReleaseAfter15Min(ticketId, prizeId);
 
     return json({
       success: true,
