@@ -142,10 +142,15 @@ export function buildReservedPrizesFromTicket(ticket: {
 
 /**
  * Fetches all currently reserved prizes (for refreshToken / full list).
+ * When excludeTicketId is provided, only returns prizes reserved by other tickets (not the given ticket).
  */
-export async function getReservedPrizes(now: Date = new Date()) {
+export async function getReservedPrizes(
+  now: Date = new Date(),
+  excludeTicketId?: string
+) {
   const rows = await prisma.ticketCode.findMany({
     where: {
+      ...(excludeTicketId ? { id: { not: excludeTicketId } } : {}),
       reservedPrizeId: { not: null },
       OR: [
         { status: "DISABLED" },

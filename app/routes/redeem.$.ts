@@ -2,7 +2,7 @@ import { json } from "@remix-run/node";
 import type { ActionFunctionArgs } from "@remix-run/node";
 import crypto from "crypto";
 import prisma from "../db.server";
-import { signRedeemToken } from "../redeem.server";
+import { getReservedPrizes, signRedeemToken } from "../redeem.server";
 
 // 🔐 VERIFY SHOPIFY APP PROXY SIGNATURE
 function verifyProxySignature(url: URL) {
@@ -140,46 +140,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         },
       });
 
-      // 3.4 Find all reserved prizes from the ticketCode table (active reservations only)
-      const ticketsWithReservedPrize = await tx.ticketCode.findMany({
-        where: {
-          reservedPrizeId: { not: null },
-          OR: [
-            { status: "DISABLED" },
-            { reservationExpiresAt: { gt: now } },
-          ],
-        },
-        select: {
-          reservedPrizeId: true,
-          status: true,
-          reservationExpiresAt: true,
-        },
-      });
-
-      const reservedPrizes: { prizeId: string; status: string; reservationExpiresAt: Date }[] =
-        ticketsWithReservedPrize
-          .filter((t): t is typeof t & { reservedPrizeId: string } => t.reservedPrizeId != null)
-          .map((t) => ({
-            prizeId: t.reservedPrizeId,
-            status: t.status,
-            reservationExpiresAt: t.reservationExpiresAt ?? new Date(0),
-          }));
-
-      return { ticket: updatedTicket, expiresAt, reservedPrizes };
+      return { ticket: updatedTicket, expiresAt };
     });
 
     // ✅ SUCCESS RESPONSE – payload for JWT (ticket id used for claim verification; never expose code on storefront)
     const expiresAt = result.expiresAt;
     const ticketType = result.ticket.type;
     const ticketId = result.ticket.id;
-    const reservedPrizes = result.reservedPrizes.map((p) => ({
-      prizeId: p.prizeId,
-      status: p.status,
-      reservationExpiresAt:
-        p.reservationExpiresAt instanceof Date
-          ? p.reservationExpiresAt.toISOString()
-          : String(p.reservationExpiresAt),
-    }));
+    const reservedPrizes = await getReservedPrizes(now);
     const token = signRedeemToken({
       ticketId,
       ticketType,

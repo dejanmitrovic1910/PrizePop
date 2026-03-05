@@ -4,7 +4,7 @@ import prisma from "../db.server";
 import { clearReleaseTimer } from "../release-timer.server";
 import {
   verifyAndValidateRedeemToken,
-  buildReservedPrizesFromTicket,
+  getReservedPrizes,
   buildTokenPayloadFromTicket,
   signRedeemToken,
 } from "../redeem.server";
@@ -61,10 +61,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       ticketForToken = updated as typeof ticket;
     }
 
+    const now = new Date();
+    const reservedPrizesOthers = await getReservedPrizes(now, ticketForToken.id);
     const newPayload = buildTokenPayloadFromTicket(
       payload,
       ticketForToken,
-      buildReservedPrizesFromTicket(ticketForToken)
+      reservedPrizesOthers
     );
     const newToken = signRedeemToken(newPayload);
 

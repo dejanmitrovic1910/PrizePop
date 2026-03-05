@@ -37,7 +37,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     await clearExpiredReservations();
 
-    const reservedPrizes = await getReservedPrizes(now);
+    const reservedPrizes = await getReservedPrizes(now, ticket.id);
     const newPayload = buildTokenPayloadFromTicket(payload, ticket, reservedPrizes);
     const newToken = signRedeemToken(newPayload);
 

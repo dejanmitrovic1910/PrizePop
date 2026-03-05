@@ -3,7 +3,7 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import prisma from "../db.server";
 import {
   verifyAndValidateRedeemToken,
-  buildReservedPrizesFromTicket,
+  getReservedPrizes,
   buildTokenPayloadFromTicket,
   signRedeemToken,
 } from "../redeem.server";
@@ -40,20 +40,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     const { payload, ticket } = validation;
-
+    const now = new Date();
+    const reservedPrizesOthers = await getReservedPrizes(now, ticket.id);
     const updatedToken = signRedeemToken(
-      buildTokenPayloadFromTicket(
-        payload,
-        ticket,
-        buildReservedPrizesFromTicket(ticket)
-      )
+      buildTokenPayloadFromTicket(payload, ticket, reservedPrizesOthers)
     );
 
     if (!prizeVariantId) {
       return json({ success: true, token: updatedToken });
     }
-
-    const now = new Date();
 
     const otherPending = await prisma.ticketCode.findFirst({
       where: {

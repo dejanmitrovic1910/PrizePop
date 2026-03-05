@@ -5,8 +5,8 @@ import { scheduleReleaseAfter15Min } from "../release-timer.server";
 import {
   verifyAndValidateRedeemToken,
   clearExpiredReservations,
+  getReservedPrizes,
   buildTokenPayloadFromTicket,
-  buildReservedPrizesFromTicket,
   signRedeemToken,
 } from "../redeem.server";
 
@@ -49,10 +49,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     await clearExpiredReservations();
 
+    const reservedPrizesOthers = await getReservedPrizes(now, payload.ticketId);
     const refreshedToken = () =>
-      signRedeemToken(
-        buildTokenPayloadFromTicket(payload, ticket, buildReservedPrizesFromTicket(ticket))
-      );
+      signRedeemToken(buildTokenPayloadFromTicket(payload, ticket, reservedPrizesOthers));
 
     if (ticket.usedAt ?? ticket.usedOrderId) {
       return json(
@@ -115,7 +114,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const tokenPayload = buildTokenPayloadFromTicket(
       payload,
       updated as typeof ticket,
-      buildReservedPrizesFromTicket(updated)
+      reservedPrizesOthers
     );
 
     return json({
