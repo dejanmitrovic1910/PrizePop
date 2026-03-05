@@ -66,6 +66,11 @@ export async function verifyAndValidateRedeemToken(
     return { ok: false, message: INVALID_OR_EXPIRED_MESSAGE };
   }
 
+  // Ticket must not be disabled
+  if (ticket.status === "DISABLED") {
+    return { ok: false, message: INVALID_OR_EXPIRED_MESSAGE };
+  }
+
   // Ticket must have an email bound (session exists)
   if (!ticket.email || !ticket.email.trim()) {
     return { ok: false, message: INVALID_OR_EXPIRED_MESSAGE };
