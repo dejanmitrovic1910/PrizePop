@@ -10,7 +10,6 @@ import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { type Prisma } from "@prisma/client";
 import prisma from "../db.server";
-import { sendPlatinumInfoEmail } from "../email.server";
 import { TicketsTable, type TicketRow } from "../components/TicketsTable";
 import { EditTicketModal } from "../components/EditTicketModal";
 import { AddTicketModal } from "../components/AddTicketModal";
@@ -150,7 +149,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   await authenticate.admin(request);
 
   if (request.method !== "POST") {
-    return { ok: false, error: "Method not allowed", imported: 0, skipped: 0, errors: [] as string[], platinumDeliver: null as PlatinumDeliverResult | null };
+    return { ok: false, error: "Method not allowed", imported: 0, skipped: 0, errors: [] as string[] };
   }
 
   const formData = await request.formData();
@@ -162,16 +161,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const typeRaw = String(formData.get("type") ?? "Golden").trim();
     const type = typeRaw === "Platinum" ? "Platinum" : "Golden";
     if (!code) {
-      return { ok: false, error: "Code is required.", imported: 0, skipped: 0, errors: [] as string[], platinumDeliver: null, ticketAction: { intent: "ticket_add", success: false, error: "Code is required." } };
+      return { ok: false, error: "Code is required.", imported: 0, skipped: 0, errors: [] as string[], ticketAction: { intent: "ticket_add", success: false, error: "Code is required." } };
     }
     const existing = await prisma.ticketCode.findUnique({ where: { code } });
     if (existing) {
-      return { ok: false, error: "A ticket with this code already exists.", imported: 0, skipped: 0, errors: [] as string[], platinumDeliver: null, ticketAction: { intent: "ticket_add", success: false, error: "Code already exists." } };
+      return { ok: false, error: "A ticket with this code already exists.", imported: 0, skipped: 0, errors: [] as string[], ticketAction: { intent: "ticket_add", success: false, error: "Code already exists." } };
     }
     await prisma.ticketCode.create({
       data: { code, type, status: "ACTIVE" },
     });
-    return { ok: true, imported: 0, skipped: 0, errors: [] as string[], platinumDeliver: null, ticketAction: { intent: "ticket_add", success: true } };
+    return { ok: true, imported: 0, skipped: 0, errors: [] as string[], ticketAction: { intent: "ticket_add", success: true } };
   }
 
   // ——— Ticket edit ———
@@ -181,84 +180,50 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const typeRaw = String(formData.get("type") ?? "").trim();
     const statusVal = String(formData.get("status") ?? "").trim();
     if (!id) {
-      return { ok: false, error: "Ticket ID is required.", imported: 0, skipped: 0, errors: [] as string[], platinumDeliver: null, ticketAction: { intent: "ticket_edit", success: false, error: "ID required." } };
+      return { ok: false, error: "Ticket ID is required.", imported: 0, skipped: 0, errors: [] as string[], ticketAction: { intent: "ticket_edit", success: false, error: "ID required." } };
     }
     const existing = await prisma.ticketCode.findUnique({ where: { id } });
     if (!existing) {
-      return { ok: false, error: "Ticket not found.", imported: 0, skipped: 0, errors: [] as string[], platinumDeliver: null, ticketAction: { intent: "ticket_edit", success: false, error: "Ticket not found." } };
+      return { ok: false, error: "Ticket not found.", imported: 0, skipped: 0, errors: [] as string[], ticketAction: { intent: "ticket_edit", success: false, error: "Ticket not found." } };
     }
     const updates: { code?: string; type?: "Golden" | "Platinum"; status?: string } = {};
     if (code && code !== existing.code) {
       const duplicate = await prisma.ticketCode.findUnique({ where: { code } });
       if (duplicate) {
-        return { ok: false, error: "Another ticket already has this code.", imported: 0, skipped: 0, errors: [] as string[], platinumDeliver: null, ticketAction: { intent: "ticket_edit", success: false, error: "Code already in use." } };
+        return { ok: false, error: "Another ticket already has this code.", imported: 0, skipped: 0, errors: [] as string[], ticketAction: { intent: "ticket_edit", success: false, error: "Code already in use." } };
       }
       updates.code = code;
     } else if (code) updates.code = code;
     if (typeRaw === "Platinum" || typeRaw === "Golden") updates.type = typeRaw;
     if (["ACTIVE", "RESERVED", "DISABLED", "ACTIVATE"].includes(statusVal)) updates.status = statusVal;
     if (Object.keys(updates).length === 0) {
-      return { ok: true, imported: 0, skipped: 0, errors: [] as string[], platinumDeliver: null, ticketAction: { intent: "ticket_edit", success: true } };
+      return { ok: true, imported: 0, skipped: 0, errors: [] as string[], ticketAction: { intent: "ticket_edit", success: true } };
     }
     await prisma.ticketCode.update({ where: { id }, data: updates });
-    return { ok: true, imported: 0, skipped: 0, errors: [] as string[], platinumDeliver: null, ticketAction: { intent: "ticket_edit", success: true } };
+    return { ok: true, imported: 0, skipped: 0, errors: [] as string[], ticketAction: { intent: "ticket_edit", success: true } };
   }
 
   // ——— Ticket remove ———
   if (intent === "ticket_remove") {
     const id = String(formData.get("id") ?? "").trim();
     if (!id) {
-      return { ok: false, error: "Ticket ID is required.", imported: 0, skipped: 0, errors: [] as string[], platinumDeliver: null, ticketAction: { intent: "ticket_remove", success: false, error: "ID required." } };
+      return { ok: false, error: "Ticket ID is required.", imported: 0, skipped: 0, errors: [] as string[], ticketAction: { intent: "ticket_remove", success: false, error: "ID required." } };
     }
     await prisma.ticketCode.delete({ where: { id } }).catch(() => null);
-    return { ok: true, imported: 0, skipped: 0, errors: [] as string[], platinumDeliver: null, ticketAction: { intent: "ticket_remove", success: true } };
-  }
-
-  // ——— Platinum info deliver ———
-  if (intent === "platinum_deliver") {
-    const token = String(formData.get("token") ?? "").trim();
-    const email = String(formData.get("email") ?? "").trim();
-
-    if (!token) {
-      return { ok: false, error: "Ticket code is required.", platinumDeliver: { success: false, error: "Ticket code is required." }, imported: 0, skipped: 0, errors: [] };
-    }
-    if (!email) {
-      return { ok: false, error: "Email is required.", platinumDeliver: { success: false, error: "Email is required." }, imported: 0, skipped: 0, errors: [] };
-    }
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return { ok: false, error: "Please enter a valid email address.", platinumDeliver: { success: false, error: "Invalid email address." }, imported: 0, skipped: 0, errors: [] };
-    }
-
-    const ticket = await prisma.ticketCode.findUnique({
-      where: { code: token },
-    });
-    if (!ticket) {
-      return { ok: false, error: "Invalid ticket code.", platinumDeliver: { success: false, error: "Invalid ticket code." }, imported: 0, skipped: 0, errors: [] };
-    }
-    if (ticket.type !== "Platinum") {
-      return { ok: false, error: "This ticket is not a Platinum ticket.", platinumDeliver: { success: false, error: "This ticket is not a Platinum ticket." }, imported: 0, skipped: 0, errors: [] };
-    }
-
-    const sendResult = await sendPlatinumInfoEmail(email);
-    if (!sendResult.ok) {
-      return { ok: false, error: sendResult.error ?? "Failed to send email.", platinumDeliver: { success: false, error: sendResult.error }, imported: 0, skipped: 0, errors: [] };
-    }
-
-    return { ok: true, platinumDeliver: { success: true }, imported: 0, skipped: 0, errors: [] };
+    return { ok: true, imported: 0, skipped: 0, errors: [] as string[], ticketAction: { intent: "ticket_remove", success: true } };
   }
 
   // ——— CSV import ———
   const file = formData.get("csv") as File | null;
   if (!file || !(file instanceof File)) {
-    return { ok: false, error: "No CSV file provided", imported: 0, skipped: 0, errors: [] as string[], platinumDeliver: null };
+    return { ok: false, error: "No CSV file provided", imported: 0, skipped: 0, errors: [] as string[] };
   }
 
   const text = await file.text();
   const rows = parseCsvTicketRows(text);
 
   if (rows.length === 0) {
-    return { ok: false, error: "CSV is empty or has no valid rows (need at least a code per line)", imported: 0, skipped: 0, errors: [] as string[], platinumDeliver: null };
+    return { ok: false, error: "CSV is empty or has no valid rows (need at least a code per line)", imported: 0, skipped: 0, errors: [] as string[] };
   }
 
   const errors: string[] = [];
@@ -299,11 +264,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     skippedCodes: skippedCodes.slice(0, 50),
     total: rows.length,
     errors: errors.slice(0, 20),
-    platinumDeliver: null,
   };
 };
-
-type PlatinumDeliverResult = { success: true } | { success: false; error: string };
 
 export default function TicketsImport() {
   const { total, tickets, page, totalPages, search, filterType, filterStatus, sort } = useLoaderData<typeof loader>();
@@ -345,7 +307,6 @@ export default function TicketsImport() {
   const data = fetcher.data;
   const isLoading =
     fetcher.state === "submitting" || fetcher.state === "loading";
-  const isPlatinumSubmit = data?.platinumDeliver != null;
 
   useEffect(() => {
     if (fetcher.state !== "idle" || !data || data === lastHandledDataRef.current) return;
@@ -361,21 +322,12 @@ export default function TicketsImport() {
       }
       return;
     }
-    if (data.platinumDeliver) {
-      if (data.platinumDeliver.success) {
-        shopify.toast?.show?.("Platinum info email sent.");
-        revalidator.revalidate();
-      } else {
-        shopify.toast?.show?.(data.platinumDeliver.error ?? "Failed to send email.", { isError: true });
-      }
-      return;
-    }
     if (data.ok && data.imported > 0) {
       shopify.toast?.show?.(`Imported ${data.imported} ticket code(s)`);
       revalidator.revalidate();
       setFile(null);
     }
-    if (data.error && !data.platinumDeliver) {
+    if (data.error) {
       shopify.toast?.show?.(data.error, { isError: true });
     }
   }, [fetcher.state, data, shopify, revalidator]);
@@ -386,14 +338,6 @@ export default function TicketsImport() {
     const formData = new FormData();
     formData.set("csv", file);
     fetcher.submit(formData, { method: "POST", encType: "multipart/form-data" });
-  };
-
-  const handlePlatinumSubmit = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const form = e.currentTarget;
-    const formData = new FormData(form);
-    formData.set("intent", "platinum_deliver");
-    fetcher.submit(formData, { method: "POST" });
   };
 
   const handleAddTicket = (e: React.FormEvent<HTMLFormElement>) => {
@@ -444,46 +388,6 @@ export default function TicketsImport() {
 
   return (
     <s-page heading="Import ticket codes">
-      {/* <s-section heading="Platinum info delivery">
-        <s-paragraph>
-          Enter a valid Platinum ticket code and the email address to send the platinum information to. The ticket code will be validated before sending.
-        </s-paragraph>
-        <form onSubmit={handlePlatinumSubmit}>
-          <s-stack direction="block" gap="base">
-            <s-stack direction="block" gap="base">
-              <label htmlFor="platinum-token">Ticket code (token)</label>
-              <input
-                id="platinum-token"
-                name="token"
-                type="text"
-                required
-                placeholder="Enter Platinum ticket code"
-                style={{ padding: "8px", width: "100%", maxWidth: "320px" }}
-              />
-            </s-stack>
-            <s-stack direction="block" gap="base">
-              <label htmlFor="platinum-email">Deliver info to email</label>
-              <input
-                id="platinum-email"
-                name="email"
-                type="email"
-                required
-                placeholder="customer@example.com"
-                style={{ padding: "8px", width: "100%", maxWidth: "320px" }}
-              />
-            </s-stack>
-            <s-button
-              type="submit"
-              variant="primary"
-              disabled={isLoading}
-              {...(isLoading && isPlatinumSubmit ? { loading: true } : {})}
-            >
-              {isLoading && isPlatinumSubmit ? "Sending…" : "Send platinum info email"}
-            </s-button>
-          </s-stack>
-        </form>
-      </s-section> */}
-
       <s-section heading="Upload CSV">
         <s-paragraph>
           Upload a CSV file with ticket codes. Use a header row or one code per
@@ -525,7 +429,7 @@ export default function TicketsImport() {
         </form>
       </s-section>
 
-      {data && !data.platinumDeliver && (
+      {data && (
         <s-section heading="Import result">
           {data.ok ? (
             <s-stack direction="block" gap="base">
@@ -575,6 +479,7 @@ export default function TicketsImport() {
           )}
         </s-section>
       )}
+
 
       <s-section heading="Ticket status">
         <s-paragraph>
