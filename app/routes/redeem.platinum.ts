@@ -1,10 +1,19 @@
 import { json } from "@remix-run/node";
-import type { ActionFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
+import prisma from "../db.server";
 import { verifyAndValidateRedeemToken } from "../redeem.server";
 import { sendPlatinumInfoEmail } from "../email.server";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const FORM_TYPE_PLATINUM = "platinum_signup";
+
+export const loader = async ({ request }: LoaderFunctionArgs) => {
+  if (request.method !== "GET") return json({ success: false, message: "Method not allowed." }, { status: 405 });
+  return json(
+    { success: false, message: "Use POST with form data: first_name, last_name, email, form_type, token." },
+    { status: 405 }
+  );
+};
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   if (request.method !== "POST") {
@@ -86,6 +95,27 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
 
     if (!sendResult.ok) {
+      // Gmail / Google password mismatch: clear session (logout) and tell client to re-authenticate
+      if (sendResult.smtpAuthError) {
+        const { payload } = validation;
+        await prisma.ticketCode.update({
+          where: { id: payload.ticketId },
+          data: {
+            email: null,
+            expiresAt: null,
+            reservedPrizeId: null,
+            reservationExpiresAt: null,
+          },
+        });
+        return json(
+          {
+            success: false,
+            message: "Session expired. Please sign in again.",
+            logout: true,
+          },
+          { status: 401 }
+        );
+      }
       return json(
         { success: false, message: sendResult.error ?? "Failed to send email." },
         { status: 500 }

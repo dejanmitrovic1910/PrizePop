@@ -5,6 +5,8 @@
  */
 
 import nodemailer from "nodemailer";
+import dns from "dns";
+dns.setDefaultResultOrder("ipv4first");
 
 const GOOGLE_EMAIL = process.env.GOOGLE_EMAIL?.trim();
 const GOOGLE_EMAIL_PASSWORD = process.env.GOOGLE_EMAIL_PASSWORD?.trim();
@@ -18,6 +20,8 @@ function getTransporter() {
     host: "smtp.gmail.com",
     port: 587,
     secure: false,
+    logger: true,
+    debug: true,
     auth: {
       user: GOOGLE_EMAIL,
       pass: GOOGLE_EMAIL_PASSWORD,
@@ -31,9 +35,13 @@ export type SendPlatinumInfoEmailParams = {
   lastName: string;
 };
 
+export type SendPlatinumInfoEmailResult =
+  | { ok: true }
+  | { ok: false; error: string; smtpAuthError?: boolean };
+
 export async function sendPlatinumInfoEmail(
   params: SendPlatinumInfoEmailParams
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<SendPlatinumInfoEmailResult> {
   const { to, firstName, lastName } = params;
   const transporter = getTransporter();
 
@@ -64,7 +72,9 @@ export async function sendPlatinumInfoEmail(
     return { ok: true };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    return { ok: false, error: msg };
+    const code = e && typeof e === "object" && "code" in e ? (e as { code: string }).code : "";
+    const smtpAuthError = code === "EAUTH" || /invalid credentials|authentication failed|username and password not accepted/i.test(msg);
+    return { ok: false, error: msg, smtpAuthError };
   }
 }
 

@@ -71,7 +71,13 @@
     "@shopify/plugin-cloudflare"
   ],
   "overrides": {
-    "p-map": "^4.0.0"
+    "p-map": "^4.0.0",
+    "minimatch": "^9.0.7",
+    "rollup": "^4.58.0",
+    "undici": "^6.24.0",
+    "flatted": "^3.4.0",
+    "ajv": "^6.14.0",
+    "immutable": "^3.8.3"
   },
   "author": "ShipCall"
 }
