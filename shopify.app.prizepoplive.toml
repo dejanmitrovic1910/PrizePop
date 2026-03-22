@@ -2,7 +2,7 @@
 
 client_id = "701d1cbdbffe22c3cfaa89985d7235be"
 name = "PrizePop"
-application_url = "https://prizepop.onrender.com"
+application_url = "https://fantasy-prize.duckdns.org"
 embedded = true
 
 [build]
@@ -29,12 +29,12 @@ scopes = "write_app_proxy,write_products,read_orders"
 
 [auth]
 redirect_urls = [
-  "https://prizepop.onrender.com/api/auth/callback",
-  "https://prizepop.onrender.com/api/auth/oauth/callback",
+  "https://fantasy-prize.duckdns.org/api/auth/callback",
+  "https://fantasy-prize.duckdns.org/api/auth/oauth/callback",
 ]
 
 [app_proxy]
-url = "https://prizepop.onrender.com/redeem"
+url = "https://fantasy-prize.duckdns.org/redeem"
 prefix = "apps"
 subpath = "redeem"
 
