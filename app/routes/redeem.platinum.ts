@@ -2,7 +2,7 @@ import { json } from "@remix-run/node";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import prisma from "../db.server";
 import { verifyAndValidateRedeemToken } from "../redeem.server";
-import { sendPlatinumInfoEmail } from "../email.server";
+import { sendPlatinumInfoEmail, sendPlatinumOwnerNotifyEmail } from "../email.server";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const FORM_TYPE_PLATINUM = "platinum_signup";
@@ -120,6 +120,28 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         { success: false, message: sendResult.error ?? "Failed to send email." },
         { status: 500 }
       );
+    }
+
+    const { payload } = validation;
+    const ticketCode = ticket.code;
+
+    await prisma.ticketCode.update({
+      where: { id: payload.ticketId },
+      data: { status: "DISABLED" },
+    });
+
+    const ownerEmail = process.env.OWNER_EMAIL?.trim();
+    if (ownerEmail) {
+      const ownerSend = await sendPlatinumOwnerNotifyEmail({
+        to: ownerEmail,
+        firstName: first_name,
+        lastName: last_name,
+        customerEmail: email,
+        ticketCode,
+      });
+      if (!ownerSend.ok) {
+        console.error("[redeem.platinum] Owner notify email failed:", ownerSend.error);
+      }
     }
 
     return json({

@@ -21,6 +21,7 @@ export type TokenPayload = {
 
 export type TicketWithRedeemFields = {
   id: string;
+  code: string;
   email: string | null;
   expiresAt: Date | null;
   status: string;
