@@ -4,7 +4,15 @@ import type {
   HeadersFunction,
   LoaderFunctionArgs,
 } from "react-router";
-import { useFetcher, useLoaderData, useLocation, useNavigate, useRevalidator, useSearchParams } from "react-router";
+import {
+  redirect,
+  useFetcher,
+  useLoaderData,
+  useLocation,
+  useNavigate,
+  useRevalidator,
+  useSearchParams,
+} from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
@@ -43,7 +51,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const page = Math.max(1, parseInt(url.searchParams.get("page") ?? "1", 10) || 1);
   const search = url.searchParams.get("search")?.trim() ?? "";
   const filterType = url.searchParams.get("type")?.trim() ?? "all";
-  const filterStatus = url.searchParams.get("status")?.trim() ?? "all";
+  const filterStatusParam = url.searchParams.get("status")?.trim() ?? "all";
+  if (filterStatusParam === "ACTIVATE") {
+    const clean = new URL(request.url);
+    clean.searchParams.delete("status");
+    throw redirect(clean.toString());
+  }
+  const filterStatus = filterStatusParam;
   const sortParam = url.searchParams.get("sort")?.trim() ?? "createdAt_desc";
 
   const where: Prisma.TicketCodeWhereInput = {};
@@ -406,10 +420,9 @@ export default function TicketsImport() {
     <s-page heading="Import ticket codes">
       <s-section heading="Upload CSV">
         <s-paragraph>
-          Upload a CSV file with ticket codes. Use a header row or one code per
-          line. Optional second column: <strong>type</strong> (e.g.{" "}
-          <code>code,type</code> or <code>&quot;code&quot;,&quot;type&quot;</code>
-          ). Duplicate codes are skipped (existing rows are not updated).
+          Upload a CSV file with ticket codes. 
+          <br />
+          Duplicate codes are skipped (existing rows are not updated).
         </s-paragraph>
         <form onSubmit={handleCsvSubmit}>
           <s-stack direction="block" gap="base">

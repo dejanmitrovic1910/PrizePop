@@ -162,7 +162,6 @@ export function TicketsTable({
               <s-option value="ACTIVE">ACTIVE</s-option>
               <s-option value="RESERVED">RESERVED</s-option>
               <s-option value="DISABLED">DISABLED</s-option>
-              <s-option value="ACTIVATE">ACTIVATE</s-option>
             </s-select>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "8px", marginLeft: "auto" }}>
