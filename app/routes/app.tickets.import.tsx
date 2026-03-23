@@ -107,10 +107,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 type CsvTicketRow = { code: string; type: string };
 
+/** First row is treated as headers when cells match common column titles (not ticket data). */
+function isCsvHeaderRow(parts: string[]): boolean {
+  const c0 = (parts[0] ?? "").trim().toLowerCase();
+  const c1 = (parts[1] ?? "").trim().toLowerCase();
+  const codeHeaders = new Set(["code", "ticket code", "ticket_code"]);
+  const typeHeaders = new Set(["", "type", "ticket type", "ticket_type"]);
+  return codeHeaders.has(c0) && typeHeaders.has(c1);
+}
+
 function parseCsvTicketRows(text: string): CsvTicketRow[] {
   const rows: CsvTicketRow[] = [];
   const lines = text.split(/\r?\n/).map((line) => line.trim());
   const defaultType = "Golden";
+  let sawFirstNonEmpty = false;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -136,6 +146,12 @@ function parseCsvTicketRows(text: string): CsvTicketRow[] {
         pos = comma === -1 ? line.length : comma + 1;
       }
     }
+
+    if (!sawFirstNonEmpty && isCsvHeaderRow(parts)) {
+      sawFirstNonEmpty = true;
+      continue;
+    }
+    sawFirstNonEmpty = true;
 
     const code = parts[0]?.trim() ?? "";
     const type = (parts[1]?.trim() || defaultType).slice(0, 255);
