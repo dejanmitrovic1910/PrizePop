@@ -21,6 +21,7 @@ import prisma from "../db.server";
 import { TicketsTable, type TicketRow } from "../components/TicketsTable";
 import { EditTicketModal } from "../components/EditTicketModal";
 import { AddTicketModal } from "../components/AddTicketModal";
+import { setupDiscountsForNewGoldenTicket } from "../golden-ticket-discount.server";
 
 const VALID_TICKET_TYPES = ["Golden", "Platinum"] as const;
 
@@ -176,7 +177,7 @@ function parseCsvTicketRows(text: string): CsvTicketRow[] {
 }
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  await authenticate.admin(request);
+  const { admin } = await authenticate.admin(request);
 
   if (request.method !== "POST") {
     return { ok: false, error: "Method not allowed", imported: 0, skipped: 0, errors: [] as string[] };
@@ -196,6 +197,25 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const existing = await prisma.ticketCode.findUnique({ where: { code } });
     if (existing) {
       return { ok: false, error: "A ticket with this code already exists.", imported: 0, skipped: 0, errors: [] as string[], ticketAction: { intent: "ticket_add", success: false, error: "Code already exists." } };
+    }
+    if (type === "Golden") {
+      try {
+        await setupDiscountsForNewGoldenTicket(admin, code);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return {
+          ok: false,
+          error: msg,
+          imported: 0,
+          skipped: 0,
+          errors: [] as string[],
+          ticketAction: {
+            intent: "ticket_add",
+            success: false,
+            error: `Shopify discount: ${msg}`,
+          },
+        };
+      }
     }
     await prisma.ticketCode.create({
       data: { code, type, status: "ACTIVE" },
@@ -271,10 +291,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         if (skippedCodes.length < 50) skippedCodes.push(row.code);
         continue;
       }
+      const rowType = parseTicketType(row.type);
+      if (rowType === "Golden") {
+        try {
+          await setupDiscountsForNewGoldenTicket(admin, row.code);
+        } catch (e) {
+          skipped++;
+          const msg = e instanceof Error ? e.message : String(e);
+          if (errors.length < 20) {
+            errors.push(`"${row.code}" (Golden): Shopify discount — ${msg}`);
+          }
+          if (skippedCodes.length < 50) skippedCodes.push(row.code);
+          continue;
+        }
+      }
       await prisma.ticketCode.create({
         data: {
           code: row.code,
-          type: parseTicketType(row.type),
+          type: rowType,
           status: "ACTIVE",
         },
       });

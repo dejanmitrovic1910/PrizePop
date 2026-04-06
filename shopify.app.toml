@@ -22,7 +22,7 @@ api_version = "2026-04"
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "write_products,write_app_proxy"
+scopes = "write_products,write_app_proxy,read_discounts,write_discounts"
 
 [auth]
 redirect_urls = [ "https://prizepop.onrender.com/api/auth" ]
