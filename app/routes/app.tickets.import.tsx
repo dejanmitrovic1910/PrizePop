@@ -21,7 +21,7 @@ import prisma from "../db.server";
 import { TicketsTable, type TicketRow } from "../components/TicketsTable";
 import { EditTicketModal } from "../components/EditTicketModal";
 import { AddTicketModal } from "../components/AddTicketModal";
-import { setupDiscountsForNewGoldenTicket } from "../golden-ticket-discount.server";
+import { setupDiscountsForNewTicket } from "../golden-ticket-discount.server";
 
 const VALID_TICKET_TYPES = ["Golden", "Platinum"] as const;
 
@@ -200,7 +200,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
     if (type === "Golden") {
       try {
-        await setupDiscountsForNewGoldenTicket(admin, code);
+        await setupDiscountsForNewTicket(admin, code);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         return {
@@ -294,7 +294,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const rowType = parseTicketType(row.type);
       if (rowType === "Golden") {
         try {
-          await setupDiscountsForNewGoldenTicket(admin, row.code);
+          await setupDiscountsForNewTicket(admin, row.code);
         } catch (e) {
           skipped++;
           const msg = e instanceof Error ? e.message : String(e);

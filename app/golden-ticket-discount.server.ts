@@ -1,9 +1,9 @@
 /**
- * Creates Shopify discount codes for Golden tickets and aligns shipping discount settings.
- * Requires Admin API scopes: read_discounts, write_discounts (and collection read via read_products / write_products).
+ * Creates Shopify discount codes for Golden tickets only: 100% off the prize collection + free shipping.
+ * Requires Admin API scopes: read_discounts, write_discounts (and collection read via write_products).
  */
 
-const DEFAULT_GOLDEN_COLLECTION_TITLE = "GOLDEN PRIZE COLLECTION FOR TEST";
+const DEFAULT_PRIZE_COLLECTION_TITLE = "GOLDEN PRIZE COLLECTION FOR TEST";
 
 type AdminGraphql = {
   graphql: (
@@ -26,25 +26,35 @@ async function readGraphqlData<T>(response: Response): Promise<T> {
   return json.data;
 }
 
-function goldenCollectionTitle(): string {
+function prizeCollectionTitle(): string {
   return (
     process.env.GOLDEN_PRIZE_COLLECTION_TITLE?.trim() ||
-    DEFAULT_GOLDEN_COLLECTION_TITLE
+    DEFAULT_PRIZE_COLLECTION_TITLE
   );
 }
 
-function shippingDiscountCode(): string | null {
-  const c = process.env.PRIZEPOP_SHIPPING_DISCOUNT_CODE?.trim();
-  return c || null;
+/** Customer-facing shipping code: must differ from the ticket code and be Shopify-safe. */
+function shippingCheckoutCode(ticketCode: string): string {
+  const t = ticketCode.trim();
+  const raw = `SHIP-${t}`.replace(/\s+/g, "-");
+  const sanitized = raw
+    .replace(/[^a-zA-Z0-9-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  const code = sanitized.slice(0, 255);
+  if (code.length < 4) {
+    throw new Error(
+      "Ticket code must include enough letters or numbers to build a shipping discount code (SHIP-…)."
+    );
+  }
+  return code;
 }
 
-export async function findGoldenPrizeCollectionGid(
-  admin: AdminGraphql
-): Promise<string> {
-  const title = goldenCollectionTitle();
+export async function findPrizeCollectionGid(admin: AdminGraphql): Promise<string> {
+  const title = prizeCollectionTitle();
   const query = `title:\"${title.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}\"`;
   const gql = `#graphql
-    query GoldenCollection($q: String!) {
+    query PrizeCollection($q: String!) {
       collections(first: 5, query: $q) {
         nodes {
           id
@@ -68,16 +78,16 @@ export async function findGoldenPrizeCollectionGid(
   return exact.id;
 }
 
-export async function createGoldenTicketCollectionDiscount(
+async function createTicketCollectionDiscount(
   admin: AdminGraphql,
-  params: { shopifyCode: string }
+  params: { productCode: string }
 ): Promise<void> {
-  const collectionGid = await findGoldenPrizeCollectionGid(admin);
+  const collectionGid = await findPrizeCollectionGid(admin);
   const startsAt = new Date().toISOString();
-  const title = `Golden ticket — ${params.shopifyCode}`.slice(0, 255);
+  const title = `Ticket — ${params.productCode}`.slice(0, 255);
 
   const gql = `#graphql
-    mutation CreateGoldenDiscount($basic: DiscountCodeBasicInput!) {
+    mutation CreateTicketCollectionDiscount($basic: DiscountCodeBasicInput!) {
       discountCodeBasicCreate(basicCodeDiscount: $basic) {
         codeDiscountNode {
           id
@@ -93,7 +103,7 @@ export async function createGoldenTicketCollectionDiscount(
 
   const basicCodeDiscount = {
     title,
-    code: params.shopifyCode,
+    code: params.productCode,
     startsAt,
     endsAt: null,
     context: { all: "ALL" },
@@ -124,51 +134,16 @@ export async function createGoldenTicketCollectionDiscount(
   }
 }
 
-/**
- * Sets the store's free-shipping discount (by customer-facing code) to a single total redemption
- * and allows combining with product (Golden collection) discounts.
- */
-export async function ensureShippingDiscountSingleUseCombinesWithProduct(
-  admin: AdminGraphql
+async function createTicketFreeShippingDiscount(
+  admin: AdminGraphql,
+  params: { ticketCode: string; shippingCode: string }
 ): Promise<void> {
-  const code = shippingDiscountCode();
-  if (!code) return;
+  const startsAt = new Date().toISOString();
+  const title = `Shipping code ${params.ticketCode}`.slice(0, 255);
 
-  const lookupGql = `#graphql
-    query ShippingDiscountByCode($code: String!) {
-      codeDiscountNodeByCode(code: $code) {
-        codeDiscount {
-          __typename
-          ... on DiscountCodeFreeShipping {
-            id
-          }
-        }
-      }
-    }
-  `;
-
-  const lookedUp = await readGraphqlData<{
-    codeDiscountNodeByCode: {
-      codeDiscount:
-        | { __typename: string; id?: string }
-        | null;
-    } | null;
-  }>(await admin.graphql(lookupGql, { variables: { code } }));
-
-  const node = lookedUp.codeDiscountNodeByCode;
-  const discount = node?.codeDiscount;
-  if (!discount || discount.__typename !== "DiscountCodeFreeShipping" || !discount.id) {
-    throw new Error(
-      `PRIZEPOP_SHIPPING_DISCOUNT_CODE "${code}" must be an existing free shipping discount code.`
-    );
-  }
-
-  const updateGql = `#graphql
-    mutation UpdateShippingDiscount(
-      $id: ID!
-      $input: DiscountCodeFreeShippingInput!
-    ) {
-      discountCodeFreeShippingUpdate(id: $id, freeShippingCodeDiscount: $input) {
+  const gql = `#graphql
+    mutation CreateTicketFreeShipping($fs: DiscountCodeFreeShippingInput!) {
+      discountCodeFreeShippingCreate(freeShippingCodeDiscount: $fs) {
         codeDiscountNode {
           id
         }
@@ -182,6 +157,12 @@ export async function ensureShippingDiscountSingleUseCombinesWithProduct(
   `;
 
   const freeShippingCodeDiscount = {
+    title,
+    code: params.shippingCode,
+    startsAt,
+    endsAt: null,
+    context: { all: "ALL" },
+    destination: { all: true },
     usageLimit: 1,
     appliesOncePerCustomer: false,
     combinesWith: {
@@ -191,30 +172,38 @@ export async function ensureShippingDiscountSingleUseCombinesWithProduct(
     },
   };
 
-  const updated = await readGraphqlData<{
-    discountCodeFreeShippingUpdate: {
+  const data = await readGraphqlData<{
+    discountCodeFreeShippingCreate: {
       userErrors: { message: string }[];
     };
-  }>(
-    await admin.graphql(updateGql, {
-      variables: { id: discount.id, input: freeShippingCodeDiscount },
-    })
-  );
+  }>(await admin.graphql(gql, { variables: { fs: freeShippingCodeDiscount } }));
 
-  const uErrs = updated.discountCodeFreeShippingUpdate.userErrors;
-  if (uErrs?.length) {
-    throw new Error(uErrs.map((e) => e.message).join("; "));
+  const errs = data.discountCodeFreeShippingCreate.userErrors;
+  if (errs?.length) {
+    throw new Error(errs.map((e) => e.message).join("; "));
   }
 }
 
-export async function setupDiscountsForNewGoldenTicket(
+/**
+ * Creates two single-use codes for a Golden ticket: 100% off the prize collection (code = ticket code) and
+ * free shipping (checkout code SHIP-… derived from the ticket code; admin title "Shipping code {ticket}").
+ */
+export async function setupDiscountsForNewTicket(
   admin: AdminGraphql,
   ticketCode: string
 ): Promise<void> {
-  const shopifyCode = ticketCode.trim().slice(0, 255);
-  if (!shopifyCode) {
+  const productCode = ticketCode.trim().slice(0, 255);
+  if (!productCode) {
     throw new Error("Ticket code is empty.");
   }
-  await ensureShippingDiscountSingleUseCombinesWithProduct(admin);
-  await createGoldenTicketCollectionDiscount(admin, { shopifyCode });
+  const shippingCode = shippingCheckoutCode(productCode);
+  if (shippingCode.toLowerCase() === productCode.toLowerCase()) {
+    throw new Error("Shipping discount code would collide with the ticket code; use a different ticket code.");
+  }
+
+  await createTicketCollectionDiscount(admin, { productCode });
+  await createTicketFreeShippingDiscount(admin, {
+    ticketCode: productCode,
+    shippingCode,
+  });
 }
